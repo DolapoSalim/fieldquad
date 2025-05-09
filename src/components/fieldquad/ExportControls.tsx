@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -19,6 +20,35 @@ interface ExportControlsProps {
 
 type ExportFormat = 'original' | 'normalized';
 
+// Helper function to calculate the area of a polygon using the Shoelace formula
+function calculatePolygonArea(points: Point[]): number {
+  const n = points.length;
+  if (n < 3) return 0; // A polygon must have at least 3 vertices
+
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n]; // Wraps around for the last vertex
+    area += (p1.x * p2.y) - (p2.x * p1.y);
+  }
+  return Math.abs(area) / 2;
+}
+
+// Helper function to calculate the area of a single annotation
+function calculateSingleAnnotationArea(annotation: Annotation): number {
+  if (annotation.type === 'bbox' && annotation.points.length === 2) {
+    const [p1, p2] = annotation.points;
+    const width = Math.abs(p1.x - p2.x);
+    const height = Math.abs(p1.y - p2.y);
+    return width * height;
+  }
+  if ((annotation.type === 'polygon' || annotation.type === 'freehand') && annotation.points.length >= 3) {
+    return calculatePolygonArea(annotation.points);
+  }
+  return 0; // Return 0 for unsupported types or invalid point counts
+}
+
+
 export function ExportControls({
   annotations,
   annotationClasses,
@@ -34,8 +64,9 @@ export function ExportControls({
       let x = p.x;
       let y = p.y;
       if (format === 'normalized') {
-        x = p.x / imageDimensions.naturalWidth;
-        y = p.y / imageDimensions.naturalHeight;
+        // Ensure naturalWidth and naturalHeight are not zero to prevent NaN/Infinity
+        x = imageDimensions.naturalWidth > 0 ? p.x / imageDimensions.naturalWidth : 0;
+        y = imageDimensions.naturalHeight > 0 ? p.y / imageDimensions.naturalHeight : 0;
       }
       // Limit decimal places for normalized coordinates
       return `${x.toFixed(format === 'normalized' ? 6 : 2)} ${y.toFixed(format === 'normalized' ? 6 : 2)}`;
@@ -43,8 +74,8 @@ export function ExportControls({
   };
 
   const handleExport = () => {
-    if (!imageDimensions) {
-      toast({ title: "Cannot Export", description: "Image dimensions are not available.", variant: "destructive" });
+    if (!imageDimensions || imageDimensions.naturalWidth === 0 || imageDimensions.naturalHeight === 0) {
+      toast({ title: "Cannot Export", description: "Image dimensions are not available or invalid.", variant: "destructive" });
       return;
     }
     if (annotations.length === 0) {
@@ -52,23 +83,33 @@ export function ExportControls({
       return;
     }
 
+    const totalImageArea = imageDimensions.naturalWidth * imageDimensions.naturalHeight;
+
+    const classAreaMap = new Map<string, number>();
+    annotations.forEach(ann => {
+      const area = calculateSingleAnnotationArea(ann);
+      classAreaMap.set(ann.classId, (classAreaMap.get(ann.classId) || 0) + area);
+    });
+
     let fileContent = `# Image: ${imageName}\n`;
+    fileContent += `# Image Size: ${imageDimensions.naturalWidth}x${imageDimensions.naturalHeight} pixels\n`;
     fileContent += `# Export Format: ${exportFormat}\n`;
     
     fileContent += `# Classes:\n`;
     const classIdToNumericIdMap = new Map<string, number>();
     annotationClasses.forEach((ac, index) => {
-      fileContent += `# ${index}: ${ac.name}\n`;
       classIdToNumericIdMap.set(ac.id, index);
+      const totalAreaForClass = classAreaMap.get(ac.id) || 0;
+      const percentageCoverage = totalImageArea > 0 ? (totalAreaForClass / totalImageArea) * 100 : 0;
+      fileContent += `# ${index}: ${ac.name} (Coverage: ${percentageCoverage.toFixed(2)}%)\n`;
     });
     
     fileContent += `# Annotations Format: class_index x1 y1 x2 y2 ... (for bbox, polygon, freehand)\n\n`;
 
     annotations.forEach(ann => {
       const numericClassId = classIdToNumericIdMap.get(ann.classId);
-      if (numericClassId === undefined) return; // Should not happen
+      if (numericClassId === undefined) return; 
 
-      // For bbox, ensure points are minX, minY, maxX, maxY before formatting
       let pointsToExport = ann.points;
       if (ann.type === 'bbox' && ann.points.length === 2) {
           const [p1, p2] = ann.points;
@@ -76,6 +117,9 @@ export function ExportControls({
           const minY = Math.min(p1.y, p2.y);
           const maxX = Math.max(p1.x, p2.x);
           const maxY = Math.max(p1.y, p2.y);
+          // For bbox in YOLO style, export usually center_x, center_y, width, height
+          // But current format is x1 y1 x2 y2 ...
+          // Let's stick to x_min y_min x_max y_max for bbox to be consistent with what might be expected from "points"
           pointsToExport = [{x: minX, y: minY}, {x: maxX, y: maxY}];
       }
       
@@ -108,7 +152,7 @@ export function ExportControls({
           <RadioGroup defaultValue="original" value={exportFormat} onValueChange={(value: ExportFormat) => setExportFormat(value)}>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="original" id="format-original" />
-              <Label htmlFor="format-original" className="font-normal">Original Coordinates</Label>
+              <Label htmlFor="format-original" className="font-normal">Original Coordinates (pixels)</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="normalized" id="format-normalized" />
@@ -119,7 +163,14 @@ export function ExportControls({
         <Button onClick={handleExport} className="w-full" disabled={annotations.length === 0 || !imageDimensions}>
           Download .txt File
         </Button>
+         {annotations.length === 0 && (
+          <p className="text-xs text-muted-foreground text-center">No annotations to export.</p>
+        )}
+        {!imageDimensions && (
+            <p className="text-xs text-muted-foreground text-center">Upload an image to enable export.</p>
+        )}
       </CardContent>
     </Card>
   );
 }
+
