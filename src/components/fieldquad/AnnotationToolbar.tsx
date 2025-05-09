@@ -62,13 +62,13 @@ export function AnnotationToolbar({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Tools & Classes</CardTitle>
+        <CardTitle className="text-xl">Tools & Classes</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         <div>
           <Label htmlFor="annotation-tool-select" className="mb-2 block text-sm font-medium">Annotation Tool</Label>
           <Select value={currentTool} onValueChange={(value) => onToolChange(value as AnnotationTool)}>
-            <SelectTrigger id="annotation-tool-select">
+            <SelectTrigger id="annotation-tool-select" className="bg-background">
               <SelectValue placeholder="Select an annotation tool" />
             </SelectTrigger>
             <SelectContent>
@@ -88,7 +88,8 @@ export function AnnotationToolbar({
         </div>
 
         {currentTool === 'select' && selectedAnnotationId && (
-          <div className="space-y-2">
+          <div className="space-y-2 pt-2">
+             <Label className="text-sm font-medium">Selected Annotation</Label>
             <Button 
               variant="outline" 
               className="w-full" 
@@ -118,9 +119,9 @@ export function AnnotationToolbar({
             <Palette size={16} className="mr-2 text-primary" /> Annotation Classes
           </Label>
           <p className="text-xs text-muted-foreground">
-            Select a class here to see its color, or for info. New annotations will prompt for class selection after drawing.
+            Select a class to highlight its annotations or create new classes below. New annotations will prompt for class selection after drawing.
           </p>
-          <ScrollArea className="h-40 w-full rounded-md border p-2">
+          <ScrollArea className="h-40 w-full rounded-md border p-2 custom-scrollbar">
             {annotationClasses.length > 0 ? (
               <div className="space-y-1">
                 {annotationClasses.map((ac) => (
@@ -142,20 +143,22 @@ export function AnnotationToolbar({
           </ScrollArea>
          
           <div className="space-y-2 pt-2">
+            <Label htmlFor="new-class-name-input" className="text-sm font-medium">Add New Class</Label>
             <Input
+              id="new-class-name-input"
               type="text"
-              placeholder="New class name"
+              placeholder="Enter class name"
               value={newClassName}
               onChange={(e) => setNewClassName(e.target.value)}
-              className="text-sm h-9"
+              className="text-sm h-9 bg-background"
             />
             <Button onClick={handleCreateClass} variant="secondary" className="w-full h-9">
-              <PlusSquare className="mr-2 h-4 w-4 shrink-0" /> Add New Class
+              <PlusSquare className="mr-2 h-4 w-4 shrink-0" /> Create Class
             </Button>
           </div>
            {selectedClassIdForNewAnnotation && annotationClasses.find(ac => ac.id === selectedClassIdForNewAnnotation) && (
             <p className="mt-1 text-xs text-muted-foreground">
-              Current default for info: <span className="font-semibold truncate">{annotationClasses.find(ac => ac.id === selectedClassIdForNewAnnotation)?.name}</span>
+              Highlighting annotations for: <span className="font-semibold truncate">{annotationClasses.find(ac => ac.id === selectedClassIdForNewAnnotation)?.name}</span>
             </p>
           )}
         </div>

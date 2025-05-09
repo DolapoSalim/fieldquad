@@ -186,16 +186,16 @@ export default function FieldQuadPage(): JSX.Element {
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
-      <header className="bg-primary text-primary-foreground p-4 shadow-lg sticky top-0 z-50">
+      <header className="bg-primary text-primary-foreground px-6 py-5 shadow-lg sticky top-0 z-50">
         <div className="container mx-auto flex items-center">
           <Leaf className="h-8 w-8 mr-3"/>
           <h1 className="text-3xl font-bold tracking-tight">FieldQuAD</h1>
-          <span className="ml-2 text-sm opacity-90 hidden md:inline">- Field Quadrant Annotator</span>
+          <span className="ml-3 text-sm opacity-90 hidden md:inline">- Field Quadrant Annotator</span>
         </div>
       </header>
       
-      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col lg:flex-row gap-6 overflow-hidden">
-        <aside className="w-full lg:w-80 xl:w-96 space-y-6 flex-shrink-0 overflow-y-auto pr-2 custom-scrollbar">
+      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col lg:flex-row gap-6 md:gap-8 overflow-hidden">
+        <aside className="w-full lg:w-80 xl:w-96 space-y-6 flex-shrink-0 overflow-y-auto lg:pr-1 custom-scrollbar">
           <ImageUploader onImageUpload={handleImageUpload} />
           <AnnotationToolbar
             currentTool={currentTool}
@@ -216,7 +216,7 @@ export default function FieldQuadPage(): JSX.Element {
           />
         </aside>
         
-        <section className="flex-1 bg-card p-3 md:p-4 rounded-xl shadow-xl min-h-[300px] md:min-h-[400px] lg:min-h-0 flex flex-col overflow-hidden">
+        <section className="flex-1 bg-card p-4 md:p-6 rounded-xl shadow-xl min-h-[300px] md:min-h-[400px] lg:min-h-0 flex flex-col overflow-hidden">
           <AnnotationCanvas
             imageSrc={imageSrc}
             imageDimensions={imageDimensions}
@@ -246,7 +246,7 @@ export default function FieldQuadPage(): JSX.Element {
           </DialogHeader>
           <div className="py-4">
             {annotationClasses.length > 0 ? (
-              <ScrollArea className="h-[200px] pr-4">
+              <ScrollArea className="h-[200px] pr-4 custom-scrollbar">
                 <div className="space-y-2">
                   {annotationClasses.map((ac) => (
                     <Button
@@ -284,7 +284,7 @@ export default function FieldQuadPage(): JSX.Element {
           </DialogHeader>
           <div className="py-4">
             {annotationClasses.length > 0 ? (
-              <ScrollArea className="h-[200px] pr-4">
+              <ScrollArea className="h-[200px] pr-4 custom-scrollbar">
                 <div className="space-y-2">
                   {annotationClasses.map((ac) => (
                     <Button
