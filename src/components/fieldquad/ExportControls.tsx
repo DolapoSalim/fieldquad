@@ -2,14 +2,12 @@
 "use client";
 
 import type React from 'react';
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Label } from '@/components/ui/label';
 import { DownloadCloud } from 'lucide-react';
-import type { Annotation, AnnotationClass, ImageDimensions, Point } from './types';
+import type { Annotation, AnnotationClass, ImageDimensions, Point, ExportFormat } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from "@/hooks/use-toast";
+import { Separator } from '@/components/ui/separator';
 
 interface ExportControlsProps {
   annotations: Annotation[];
@@ -18,23 +16,20 @@ interface ExportControlsProps {
   imageName?: string;
 }
 
-type ExportFormat = 'original' | 'normalized';
-
 // Helper function to calculate the area of a polygon using the Shoelace formula
 function calculatePolygonArea(points: Point[]): number {
   const n = points.length;
-  if (n < 3) return 0; // A polygon must have at least 3 vertices
+  if (n < 3) return 0; 
 
   let area = 0;
   for (let i = 0; i < n; i++) {
     const p1 = points[i];
-    const p2 = points[(i + 1) % n]; // Wraps around for the last vertex
+    const p2 = points[(i + 1) % n]; 
     area += (p1.x * p2.y) - (p2.x * p1.y);
   }
   return Math.abs(area) / 2;
 }
 
-// Helper function to calculate the area of a single annotation
 function calculateSingleAnnotationArea(annotation: Annotation): number {
   if (annotation.type === 'bbox' && annotation.points.length === 2) {
     const [p1, p2] = annotation.points;
@@ -45,46 +40,35 @@ function calculateSingleAnnotationArea(annotation: Annotation): number {
   if ((annotation.type === 'polygon' || annotation.type === 'freehand') && annotation.points.length >= 3) {
     return calculatePolygonArea(annotation.points);
   }
-  return 0; // Return 0 for unsupported types or invalid point counts
+  return 0;
 }
-
 
 export function ExportControls({
   annotations,
   annotationClasses,
   imageDimensions,
-  imageName = "annotated_image.jpg"
+  imageName = "annotated_image" // Default without extension
 }: ExportControlsProps): JSX.Element {
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('original');
   const { toast } = useToast();
 
-  const formatCoordinatesForExport = (points: Point[], format: ExportFormat): string => {
-    if (!imageDimensions) return '';
+  const getSanitizedImageName = (): string => {
+    return imageName.includes('.') ? imageName.substring(0, imageName.lastIndexOf('.')) : imageName;
+  }
+
+  const formatCoordinatesForExport = (points: Point[], format: ExportFormat, currentImageDimensions: ImageDimensions): string => {
     return points.map(p => {
       let x = p.x;
       let y = p.y;
       if (format === 'normalized') {
-        // Ensure naturalWidth and naturalHeight are not zero to prevent NaN/Infinity
-        x = imageDimensions.naturalWidth > 0 ? p.x / imageDimensions.naturalWidth : 0;
-        y = imageDimensions.naturalHeight > 0 ? p.y / imageDimensions.naturalHeight : 0;
+        x = currentImageDimensions.naturalWidth > 0 ? p.x / currentImageDimensions.naturalWidth : 0;
+        y = currentImageDimensions.naturalHeight > 0 ? p.y / currentImageDimensions.naturalHeight : 0;
       }
-      // Limit decimal places for normalized coordinates
       return `${x.toFixed(format === 'normalized' ? 6 : 2)} ${y.toFixed(format === 'normalized' ? 6 : 2)}`;
     }).join(' ');
   };
 
-  const handleExport = () => {
-    if (!imageDimensions || imageDimensions.naturalWidth === 0 || imageDimensions.naturalHeight === 0) {
-      toast({ title: "Cannot Export", description: "Image dimensions are not available or invalid.", variant: "destructive" });
-      return;
-    }
-    if (annotations.length === 0) {
-      toast({ title: "No Annotations", description: "There are no annotations to export.", variant: "default" });
-      return;
-    }
-
-    const totalImageArea = imageDimensions.naturalWidth * imageDimensions.naturalHeight;
-
+  const generateTxtFileContent = (format: ExportFormat, currentImageDimensions: ImageDimensions): string => {
+    const totalImageArea = currentImageDimensions.naturalWidth * currentImageDimensions.naturalHeight;
     const classAreaMap = new Map<string, number>();
     annotations.forEach(ann => {
       const area = calculateSingleAnnotationArea(ann);
@@ -92,16 +76,16 @@ export function ExportControls({
     });
 
     let fileContent = `# Image: ${imageName}\n`;
-    fileContent += `# Image Size: ${imageDimensions.naturalWidth}x${imageDimensions.naturalHeight} pixels\n`;
-    fileContent += `# Export Format: ${exportFormat}\n`;
+    fileContent += `# Image Size: ${currentImageDimensions.naturalWidth}x${currentImageDimensions.naturalHeight} pixels\n`;
+    fileContent += `# Export Format: ${format} coordinates\n`;
     
-    fileContent += `# Classes:\n`;
+    fileContent += `# Classes (ID: Name - Coverage %):\n`;
     const classIdToNumericIdMap = new Map<string, number>();
     annotationClasses.forEach((ac, index) => {
       classIdToNumericIdMap.set(ac.id, index);
       const totalAreaForClass = classAreaMap.get(ac.id) || 0;
       const percentageCoverage = totalImageArea > 0 ? (totalAreaForClass / totalImageArea) * 100 : 0;
-      fileContent += `# ${index}: ${ac.name} (Coverage: ${percentageCoverage.toFixed(2)}%)\n`;
+      fileContent += `# ${index}: ${ac.name} (${percentageCoverage.toFixed(2)}%)\n`;
     });
     
     fileContent += `# Annotations Format: class_index x1 y1 x2 y2 ... (for bbox, polygon, freehand)\n\n`;
@@ -117,60 +101,137 @@ export function ExportControls({
           const minY = Math.min(p1.y, p2.y);
           const maxX = Math.max(p1.x, p2.x);
           const maxY = Math.max(p1.y, p2.y);
-          // For bbox in YOLO style, export usually center_x, center_y, width, height
-          // But current format is x1 y1 x2 y2 ...
-          // Let's stick to x_min y_min x_max y_max for bbox to be consistent with what might be expected from "points"
           pointsToExport = [{x: minX, y: minY}, {x: maxX, y: maxY}];
       }
       
-      const coordsStr = formatCoordinatesForExport(pointsToExport, exportFormat);
+      const coordsStr = formatCoordinatesForExport(pointsToExport, format, currentImageDimensions);
       fileContent += `${numericClassId} ${coordsStr}\n`;
     });
+    return fileContent;
+  };
 
-    const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+  const downloadFile = (content: string, filename: string, type: string) => {
+    const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const sanitizedImageName = imageName.substring(0, imageName.lastIndexOf('.')) || imageName;
-    link.download = `${sanitizedImageName}_annotations_${exportFormat}.txt`;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    toast({ title: "Export Successful", description: `Annotations downloaded as ${filename}` });
+  }
 
-    toast({ title: "Export Successful", description: `Annotations downloaded as ${link.download}` });
+  const handleExportAnnotationsTXT = (format: ExportFormat) => {
+    if (!imageDimensions || imageDimensions.naturalWidth === 0 || imageDimensions.naturalHeight === 0) {
+      toast({ title: "Cannot Export", description: "Image dimensions are not available or invalid.", variant: "destructive" });
+      return;
+    }
+    if (annotations.length === 0) {
+      toast({ title: "No Annotations", description: "There are no annotations to export.", variant: "default" });
+      return;
+    }
+
+    const fileContent = generateTxtFileContent(format, imageDimensions);
+    const sanitizedBaseName = getSanitizedImageName();
+    const filename = `${sanitizedBaseName}_annotations_${format}.txt`;
+    downloadFile(fileContent, filename, 'text/plain;charset=utf-8');
   };
+
+  const handleExportCoverageJSON = () => {
+    if (!imageDimensions || imageDimensions.naturalWidth === 0 || imageDimensions.naturalHeight === 0) {
+      toast({ title: "Cannot Export", description: "Image dimensions are not available or invalid.", variant: "destructive" });
+      return;
+    }
+     if (annotations.length === 0 && annotationClasses.length === 0) { // Allow export if classes exist but no annotations
+      toast({ title: "No Data", description: "No classes or annotations to export for coverage.", variant: "default" });
+      return;
+    }
+
+    const totalImageArea = imageDimensions.naturalWidth * imageDimensions.naturalHeight;
+    
+    const classCoverageData = annotationClasses.map((ac, index) => {
+      const annotationsForClass = annotations.filter(ann => ann.classId === ac.id);
+      const totalAreaForClass = annotationsForClass.reduce((sum, ann) => sum + calculateSingleAnnotationArea(ann), 0);
+      const percentageCoverage = totalImageArea > 0 ? (totalAreaForClass / totalImageArea) * 100 : 0;
+      return {
+        classId: ac.id,
+        className: ac.name,
+        numericId: index,
+        color: ac.color,
+        annotationCount: annotationsForClass.length,
+        totalPixelArea: parseFloat(totalAreaForClass.toFixed(2)),
+        percentageCoverage: parseFloat(percentageCoverage.toFixed(2)),
+      };
+    });
+
+    const exportData = {
+      imageName: imageName,
+      imageDetails: { // Changed from imageDimensions to imageDetails for clarity
+        width: imageDimensions.naturalWidth,
+        height: imageDimensions.naturalHeight,
+        totalPixelArea: parseFloat(totalImageArea.toFixed(2)),
+      },
+      coverageStatistics: classCoverageData,
+    };
+
+    const fileContent = JSON.stringify(exportData, null, 2);
+    const sanitizedBaseName = getSanitizedImageName();
+    const filename = `${sanitizedBaseName}_coverage.json`;
+    downloadFile(fileContent, filename, 'application/json;charset=utf-8');
+  };
+
+
+  const commonDisabled = annotations.length === 0 || !imageDimensions;
+  const coverageDisabled = (annotations.length === 0 && annotationClasses.length === 0) || !imageDimensions;
+
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center"><DownloadCloud className="mr-2 h-5 w-5 text-primary" /> Export Annotations</CardTitle>
+        <CardTitle className="flex items-center"><DownloadCloud className="mr-2 h-5 w-5 text-primary" /> Export Data</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3">
         <div>
-          <Label className="mb-2 block text-sm font-medium">Coordinate Format</Label>
-          <RadioGroup defaultValue="original" value={exportFormat} onValueChange={(value: ExportFormat) => setExportFormat(value)}>
-            <div className="flex items-center space-x-2">
-              <RadioGroupItem value="original" id="format-original" />
-              <Label htmlFor="format-original" className="font-normal">Original Coordinates (pixels)</Label>
-            </div>
-            <div className="flex items-center space-x-2">
-              <RadioGroupItem value="normalized" id="format-normalized" />
-              <Label htmlFor="format-normalized" className="font-normal">Normalized Coordinates (0-1)</Label>
-            </div>
-          </RadioGroup>
+          <h4 className="text-sm font-medium mb-2">Annotation Coordinates (.txt)</h4>
+          <div className="space-y-2">
+            <Button 
+              onClick={() => handleExportAnnotationsTXT('original')} 
+              className="w-full" 
+              variant="outline"
+              disabled={commonDisabled}
+            >
+              Original Coordinates
+            </Button>
+            <Button 
+              onClick={() => handleExportAnnotationsTXT('normalized')} 
+              className="w-full" 
+              variant="outline"
+              disabled={commonDisabled}
+            >
+              Normalized Coordinates
+            </Button>
+          </div>
         </div>
-        <Button onClick={handleExport} className="w-full" disabled={annotations.length === 0 || !imageDimensions}>
-          Download .txt File
-        </Button>
-         {annotations.length === 0 && (
-          <p className="text-xs text-muted-foreground text-center">No annotations to export.</p>
-        )}
-        {!imageDimensions && (
-            <p className="text-xs text-muted-foreground text-center">Upload an image to enable export.</p>
+        <Separator />
+        <div>
+          <h4 className="text-sm font-medium mb-2">Coverage Statistics (.json)</h4>
+          <Button 
+            onClick={handleExportCoverageJSON} 
+            className="w-full"
+            variant="outline"
+            disabled={coverageDisabled}
+          >
+            Class Coverage & Area
+          </Button>
+        </div>
+         {(commonDisabled || coverageDisabled) && (
+          <p className="text-xs text-muted-foreground text-center pt-2">
+            { !imageDimensions ? "Upload an image to enable export." : "Add annotations to enable export."}
+          </p>
         )}
       </CardContent>
     </Card>
   );
 }
-

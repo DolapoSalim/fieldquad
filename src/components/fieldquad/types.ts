@@ -33,3 +33,5 @@ export interface ShapeData {
   type: Exclude<AnnotationTool, 'select'>;
   points: Point[];
 }
+
+export type ExportFormat = 'original' | 'normalized';
