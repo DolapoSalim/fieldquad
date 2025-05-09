@@ -18,10 +18,11 @@ interface AnnotationToolbarProps {
   onToolChange: (tool: AnnotationTool) => void;
   annotationClasses: AnnotationClass[];
   onClassCreate: (name: string) => void;
-  selectedClassIdForNewAnnotation: string | null; // Class selected for assigning to NEWLY drawn shapes
-  onClassSelectForToolbar: (classId: string) => void; // Handler for when a class is clicked in the list
-  selectedAnnotationId: string | null; // ID of the currently selected annotation on canvas
-  onDeleteSelectedAnnotation: () => void; // Handler to delete the selected annotation
+  selectedClassIdForNewAnnotation: string | null; 
+  onClassSelectForToolbar: (classId: string) => void; 
+  selectedAnnotationId: string | null; 
+  onDeleteSelectedAnnotation: () => void; 
+  onOpenEditClassDialog: () => void; // New prop
 }
 
 const toolIcons: Record<AnnotationTool, React.ElementType> = {
@@ -47,6 +48,7 @@ export function AnnotationToolbar({
   onClassSelectForToolbar,
   selectedAnnotationId,
   onDeleteSelectedAnnotation,
+  onOpenEditClassDialog, 
 }: AnnotationToolbarProps): JSX.Element {
   const [newClassName, setNewClassName] = useState('');
 
@@ -86,7 +88,15 @@ export function AnnotationToolbar({
         </div>
 
         {currentTool === 'select' && selectedAnnotationId && (
-          <div>
+          <div className="space-y-2">
+            <Button 
+              variant="outline" 
+              className="w-full" 
+              onClick={onOpenEditClassDialog}
+              disabled={!selectedAnnotationId}
+            >
+              <Palette className="mr-2 h-4 w-4 shrink-0" /> Change Class
+            </Button>
             <Button 
               variant="destructive" 
               className="w-full" 
@@ -153,5 +163,3 @@ export function AnnotationToolbar({
     </Card>
   );
 }
-
-    

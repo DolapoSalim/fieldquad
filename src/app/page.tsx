@@ -36,6 +36,7 @@ export default function FieldQuadPage(): JSX.Element {
   
   const [pendingShapeData, setPendingShapeData] = useState<ShapeData | null>(null);
   const [isClassAssignmentDialogOpen, setIsClassAssignmentDialogOpen] = useState(false);
+  const [isEditClassDialogOpen, setIsEditClassDialogOpen] = useState(false);
 
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
 
@@ -65,7 +66,7 @@ export default function FieldQuadPage(): JSX.Element {
     }
     setPendingShapeData(shape);
     setIsClassAssignmentDialogOpen(true);
-    setSelectedAnnotationId(null); // Deselect any annotation when drawing a new one
+    setSelectedAnnotationId(null); 
   };
 
   const handleAssignClassToShape = (classId: string) => {
@@ -115,7 +116,7 @@ export default function FieldQuadPage(): JSX.Element {
   const handleSelectAnnotation = useCallback((id: string | null) => {
     setSelectedAnnotationId(id);
     if (id) {
-      setCurrentTool('select'); // Switch to select tool when an annotation is selected
+      setCurrentTool('select'); 
     }
   }, []);
 
@@ -124,13 +125,39 @@ export default function FieldQuadPage(): JSX.Element {
     setAnnotations(prev => prev.filter(ann => ann.id !== selectedAnnotationId));
     setSelectedAnnotationId(null);
     toast({ title: "Annotation Deleted" });
-  }, [selectedAnnotationId]);
+  }, [selectedAnnotationId, toast]);
 
-  // Effect to handle 'Delete' or 'Backspace' key press for deleting selected annotation
+  const handleOpenEditClassDialog = () => {
+    if (!selectedAnnotationId) {
+      toast({ title: "No Annotation Selected", description: "Please select an annotation to change its class.", variant: "destructive" });
+      return;
+    }
+    setIsEditClassDialogOpen(true);
+  };
+
+  const handleChangeAnnotationClass = (newClassId: string) => {
+    if (!selectedAnnotationId) return;
+
+    setAnnotations(prevAnnotations =>
+      prevAnnotations.map(ann =>
+        ann.id === selectedAnnotationId ? { ...ann, classId: newClassId } : ann
+      )
+    );
+
+    const updatedClass = annotationClasses.find(ac => ac.id === newClassId);
+    toast({
+      title: "Annotation Class Changed",
+      description: `Annotation class updated to: ${updatedClass?.name || 'Unknown'}`,
+    });
+
+    setIsEditClassDialogOpen(false);
+  };
+
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (selectedAnnotationId && (event.key === 'Delete' || event.key === 'Backspace')) {
-        event.preventDefault(); // Prevent browser back navigation on backspace
+        event.preventDefault(); 
         handleDeleteSelectedAnnotation();
       }
     };
@@ -150,7 +177,6 @@ export default function FieldQuadPage(): JSX.Element {
     }
   }, [annotationClasses, selectedClassId]);
 
-  // When tool changes, deselect annotation unless the new tool is 'select'
   useEffect(() => {
     if (currentTool !== 'select' && selectedAnnotationId) {
       setSelectedAnnotationId(null);
@@ -159,7 +185,7 @@ export default function FieldQuadPage(): JSX.Element {
 
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="bg-primary text-primary-foreground p-4 shadow-lg sticky top-0 z-50">
         <div className="container mx-auto flex items-center">
           <Leaf className="h-8 w-8 mr-3"/>
@@ -168,42 +194,41 @@ export default function FieldQuadPage(): JSX.Element {
         </div>
       </header>
       
-      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col overflow-hidden">
-        <div className="flex flex-col lg:flex-row gap-6 flex-1 overflow-hidden">
-          <aside className="w-full lg:w-80 xl:w-96 space-y-6 flex-shrink-0 overflow-y-auto">
-            <ImageUploader onImageUpload={handleImageUpload} />
-            <AnnotationToolbar
-              currentTool={currentTool}
-              onToolChange={setCurrentTool}
-              annotationClasses={annotationClasses}
-              onClassCreate={handleCreateClass}
-              selectedClassIdForNewAnnotation={selectedClassId} // Renamed for clarity
-              onClassSelectForToolbar={handleSelectClassForToolbar} // Renamed for clarity
-              selectedAnnotationId={selectedAnnotationId}
-              onDeleteSelectedAnnotation={handleDeleteSelectedAnnotation}
-            />
-            <ExportControls
-              annotations={annotations}
-              annotationClasses={annotationClasses}
-              imageDimensions={imageDimensions}
-              imageName={imageFile?.name}
-            />
-          </aside>
-          
-          <section className="flex-1 bg-card p-3 md:p-4 rounded-xl shadow-xl min-h-[300px] md:min-h-[400px] lg:min-h-0 flex flex-col overflow-hidden">
-            <AnnotationCanvas
-              imageSrc={imageSrc}
-              imageDimensions={imageDimensions}
-              annotations={annotations}
-              currentTool={currentTool}
-              annotationClasses={annotationClasses}
-              onShapeDrawn={handleShapeDrawn}
-              onAnnotationsChange={handleAnnotationsChange}
-              selectedAnnotationId={selectedAnnotationId}
-              onSelectAnnotation={handleSelectAnnotation}
-            />
-          </section>
-        </div>
+      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col lg:flex-row gap-6 overflow-hidden">
+        <aside className="w-full lg:w-80 xl:w-96 space-y-6 flex-shrink-0 overflow-y-auto pr-2 custom-scrollbar">
+          <ImageUploader onImageUpload={handleImageUpload} />
+          <AnnotationToolbar
+            currentTool={currentTool}
+            onToolChange={setCurrentTool}
+            annotationClasses={annotationClasses}
+            onClassCreate={handleCreateClass}
+            selectedClassIdForNewAnnotation={selectedClassId} 
+            onClassSelectForToolbar={handleSelectClassForToolbar} 
+            selectedAnnotationId={selectedAnnotationId}
+            onDeleteSelectedAnnotation={handleDeleteSelectedAnnotation}
+            onOpenEditClassDialog={handleOpenEditClassDialog}
+          />
+          <ExportControls
+            annotations={annotations}
+            annotationClasses={annotationClasses}
+            imageDimensions={imageDimensions}
+            imageName={imageFile?.name}
+          />
+        </aside>
+        
+        <section className="flex-1 bg-card p-3 md:p-4 rounded-xl shadow-xl min-h-[300px] md:min-h-[400px] lg:min-h-0 flex flex-col overflow-hidden">
+          <AnnotationCanvas
+            imageSrc={imageSrc}
+            imageDimensions={imageDimensions}
+            annotations={annotations}
+            currentTool={currentTool}
+            annotationClasses={annotationClasses}
+            onShapeDrawn={handleShapeDrawn}
+            onAnnotationsChange={handleAnnotationsChange}
+            selectedAnnotationId={selectedAnnotationId}
+            onSelectAnnotation={handleSelectAnnotation}
+          />
+        </section>
       </main>
 
       <Dialog open={isClassAssignmentDialogOpen} onOpenChange={(isOpen) => {
@@ -249,9 +274,43 @@ export default function FieldQuadPage(): JSX.Element {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={isEditClassDialogOpen} onOpenChange={setIsEditClassDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Change Annotation Class</DialogTitle>
+            <DialogDescription>
+              Select a new class for the currently selected annotation.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {annotationClasses.length > 0 ? (
+              <ScrollArea className="h-[200px] pr-4">
+                <div className="space-y-2">
+                  {annotationClasses.map((ac) => (
+                    <Button
+                      key={ac.id}
+                      variant="outline"
+                      className="w-full justify-start"
+                      onClick={() => handleChangeAnnotationClass(ac.id)}
+                    >
+                      <span style={{ backgroundColor: ac.color }} className="mr-2 h-3 w-3 rounded-full inline-block border border-foreground/20 shrink-0"></span>
+                      <span className="truncate">{ac.name}</span>
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
+            ) : (
+              <p>No annotation classes available to choose from.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsEditClassDialogOpen(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+
       <Toaster />
     </div>
   );
 }
-
-    
