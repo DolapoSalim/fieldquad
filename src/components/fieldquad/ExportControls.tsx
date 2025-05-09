@@ -8,6 +8,12 @@ import type { Annotation, AnnotationClass, ImageDimensions, Point, ExportFormat 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface ExportControlsProps {
   annotations: Annotation[];
@@ -43,6 +49,29 @@ function calculateSingleAnnotationArea(annotation: Annotation): number {
   return 0;
 }
 
+type CoverageExportFormat = 'json' | 'txt' | 'csv'; // csv for xlsx
+
+interface CoverageDataItem {
+  classId: string;
+  className: string;
+  numericId: number;
+  color: string;
+  annotationCount: number;
+  totalPixelArea: number;
+  percentageCoverage: number;
+}
+
+interface PreparedCoverageData {
+  imageName: string;
+  imageDetails: {
+    width: number;
+    height: number;
+    totalPixelArea: number;
+  };
+  coverageStatistics: CoverageDataItem[];
+}
+
+
 export function ExportControls({
   annotations,
   annotationClasses,
@@ -67,7 +96,7 @@ export function ExportControls({
     }).join(' ');
   };
 
-  const generateTxtFileContent = (format: ExportFormat, currentImageDimensions: ImageDimensions): string => {
+  const generateTxtAnnotationFileContent = (format: ExportFormat, currentImageDimensions: ImageDimensions): string => {
     const totalImageArea = currentImageDimensions.naturalWidth * currentImageDimensions.naturalHeight;
     const classAreaMap = new Map<string, number>();
     annotations.forEach(ann => {
@@ -133,21 +162,22 @@ export function ExportControls({
       return;
     }
 
-    const fileContent = generateTxtFileContent(format, imageDimensions);
+    const fileContent = generateTxtAnnotationFileContent(format, imageDimensions);
     const sanitizedBaseName = getSanitizedImageName();
     const filename = `${sanitizedBaseName}_annotations_${format}.txt`;
     downloadFile(fileContent, filename, 'text/plain;charset=utf-8');
   };
 
-  const handleExportCoverageJSON = () => {
+  const prepareCoverageData = (): PreparedCoverageData | null => {
     if (!imageDimensions || imageDimensions.naturalWidth === 0 || imageDimensions.naturalHeight === 0) {
-      toast({ title: "Cannot Export", description: "Image dimensions are not available or invalid.", variant: "destructive" });
-      return;
+      toast({ title: "Cannot Export", description: "Image dimensions are not available or invalid for coverage calculation.", variant: "destructive" });
+      return null;
     }
-     if (annotations.length === 0 && annotationClasses.length === 0) { // Allow export if classes exist but no annotations
-      toast({ title: "No Data", description: "No classes or annotations to export for coverage.", variant: "default" });
-      return;
+    if (annotationClasses.length === 0) {
+         toast({ title: "No Classes", description: "No annotation classes defined to calculate coverage.", variant: "default" });
+         return null;
     }
+
 
     const totalImageArea = imageDimensions.naturalWidth * imageDimensions.naturalHeight;
     
@@ -166,25 +196,98 @@ export function ExportControls({
       };
     });
 
-    const exportData = {
+    return {
       imageName: imageName,
-      imageDetails: { // Changed from imageDimensions to imageDetails for clarity
+      imageDetails: {
         width: imageDimensions.naturalWidth,
         height: imageDimensions.naturalHeight,
         totalPixelArea: parseFloat(totalImageArea.toFixed(2)),
       },
       coverageStatistics: classCoverageData,
     };
-
-    const fileContent = JSON.stringify(exportData, null, 2);
-    const sanitizedBaseName = getSanitizedImageName();
-    const filename = `${sanitizedBaseName}_coverage.json`;
-    downloadFile(fileContent, filename, 'application/json;charset=utf-8');
   };
 
+  const generateCoverageFileContent = (data: PreparedCoverageData, format: CoverageExportFormat): string => {
+    if (format === 'json') {
+      return JSON.stringify(data, null, 2);
+    }
+    
+    if (format === 'txt') {
+      let content = `Image: ${data.imageName}\n`;
+      content += `Image Size: ${data.imageDetails.width}x${data.imageDetails.height} pixels\n`;
+      content += `Total Image Area: ${data.imageDetails.totalPixelArea.toFixed(2)} pixels\n\n`;
+      content += `Coverage Statistics:\n`;
+      content += "--------------------\n";
+      data.coverageStatistics.forEach(stat => {
+        content += `Class Name: ${stat.className}\n`;
+        content += `Annotation Count: ${stat.annotationCount}\n`;
+        content += `Total Pixel Area: ${stat.totalPixelArea.toFixed(2)}\n`;
+        content += `Percentage Coverage: ${stat.percentageCoverage.toFixed(2)}%\n`;
+        content += "--------------------\n";
+      });
+      return content;
+    }
 
-  const commonDisabled = annotations.length === 0 || !imageDimensions;
-  const coverageDisabled = (annotations.length === 0 && annotationClasses.length === 0) || !imageDimensions;
+    if (format === 'csv') {
+      let content = "ClassName,AnnotationCount,TotalPixelArea,PercentageCoverage\n";
+      data.coverageStatistics.forEach(stat => {
+        content += `${stat.className},${stat.annotationCount},${stat.totalPixelArea.toFixed(2)},${stat.percentageCoverage.toFixed(2)}\n`;
+      });
+      return content;
+    }
+    return "";
+  };
+
+  const handleExportCoverage = (format: CoverageExportFormat) => {
+    const coverageData = prepareCoverageData();
+    if (!coverageData) {
+      // prepareCoverageData already shows a toast if there's an issue (e.g. no image dimensions, no classes)
+      if(annotationClasses.length > 0 && annotations.length === 0 && imageDimensions) {
+         // Special case: classes exist, annotations are zero, but dimensions are fine. Export empty/zeroed stats.
+         // The toast in prepareCoverageData might not fire for this specific scenario if it only checks for class length.
+         // However, if prepareCoverageData returns null, we should not proceed.
+         // Let's ensure that if we get this far, it means we have some data to format, even if it's all zeros.
+         // The current prepareCoverageData will return data even with 0 annotations if classes exist.
+      } else if (!imageDimensions || annotationClasses.length === 0) {
+         // If prepareCoverageData returned null due to missing image dimensions or no classes, we've already toasted.
+         return;
+      }
+      // If annotations are zero, but classes exist, coverageData will be generated with zeros.
+    }
+
+
+    if (coverageData.coverageStatistics.length === 0 && annotations.length > 0) {
+        toast({ title: "Error", description: "Could not match annotations to classes for coverage export.", variant: "destructive" });
+        return;
+    }
+    
+    // If annotations.length is 0 AND annotationClasses.length > 0, coverageData will have entries for each class with 0 coverage.
+    // This is acceptable for export.
+
+    const fileContent = generateCoverageFileContent(coverageData, format);
+    const sanitizedBaseName = getSanitizedImageName();
+    let filename = `${sanitizedBaseName}_coverage`;
+    let mimeType = '';
+
+    switch (format) {
+      case 'json':
+        filename += '.json';
+        mimeType = 'application/json;charset=utf-8';
+        break;
+      case 'txt':
+        filename += '.txt';
+        mimeType = 'text/plain;charset=utf-8';
+        break;
+      case 'csv': // For XLSX, we'll provide CSV
+        filename += '.csv';
+        mimeType = 'text/csv;charset=utf-8';
+        break;
+    }
+    downloadFile(fileContent, filename, mimeType);
+  };
+
+  const commonAnnotationExportDisabled = annotations.length === 0 || !imageDimensions;
+  const coverageExportDisabled = !imageDimensions || annotationClasses.length === 0;
 
 
   return (
@@ -200,7 +303,7 @@ export function ExportControls({
               onClick={() => handleExportAnnotationsTXT('original')} 
               className="w-full" 
               variant="outline"
-              disabled={commonDisabled}
+              disabled={commonAnnotationExportDisabled}
             >
               Original Coordinates
             </Button>
@@ -208,7 +311,7 @@ export function ExportControls({
               onClick={() => handleExportAnnotationsTXT('normalized')} 
               className="w-full" 
               variant="outline"
-              disabled={commonDisabled}
+              disabled={commonAnnotationExportDisabled}
             >
               Normalized Coordinates
             </Button>
@@ -216,19 +319,38 @@ export function ExportControls({
         </div>
         <Separator />
         <div>
-          <h4 className="text-sm font-medium mb-2">Coverage Statistics (.json)</h4>
-          <Button 
-            onClick={handleExportCoverageJSON} 
-            className="w-full"
-            variant="outline"
-            disabled={coverageDisabled}
-          >
-            Class Coverage & Area
-          </Button>
+          <h4 className="text-sm font-medium mb-2">Coverage Statistics</h4>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                className="w-full"
+                variant="outline"
+                disabled={coverageExportDisabled}
+              >
+                Export Coverage As...
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56">
+              <DropdownMenuItem onClick={() => handleExportCoverage('csv')}>
+                Spreadsheet (.csv for Excel)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExportCoverage('txt')}>
+                Text File (.txt)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExportCoverage('json')}>
+                JSON File (.json)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-         {(commonDisabled || coverageDisabled) && (
+         {(commonAnnotationExportDisabled || coverageExportDisabled) && (
           <p className="text-xs text-muted-foreground text-center pt-2">
-            { !imageDimensions ? "Upload an image to enable export." : "Add annotations to enable export."}
+            { !imageDimensions ? "Upload an image to enable export." : 
+              (annotations.length === 0 && annotationClasses.length === 0) ? "Add classes and annotations to enable export." :
+              (annotations.length === 0 && commonAnnotationExportDisabled) ? "Add annotations to enable coordinate export." :
+              (annotationClasses.length === 0 && coverageExportDisabled) ? "Add classes to enable coverage export." :
+              "Add data to enable exports." 
+            }
           </p>
         )}
       </CardContent>
