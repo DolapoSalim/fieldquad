@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -6,10 +7,13 @@ import { ImageUploader } from '@/components/fieldquad/ImageUploader';
 import { AnnotationToolbar } from '@/components/fieldquad/AnnotationToolbar';
 import { AnnotationCanvas } from '@/components/fieldquad/AnnotationCanvas';
 import { ExportControls } from '@/components/fieldquad/ExportControls';
-import type { Annotation, AnnotationClass, AnnotationTool, ImageDimensions } from '@/components/fieldquad/types';
+import type { Annotation, AnnotationClass, AnnotationTool, ImageDimensions, Point, ShapeData } from '@/components/fieldquad/types';
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/use-toast";
 import { Leaf } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 // Helper to generate distinct colors
 const PREDEFINED_COLORS = [
@@ -28,32 +32,64 @@ export default function FieldQuadPage(): JSX.Element {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationClasses, setAnnotationClasses] = useState<AnnotationClass[]>([]);
   const [currentTool, setCurrentTool] = useState<AnnotationTool>('bbox');
-  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null); // For highlighting/filtering, not new annotations
+  
+  const [pendingShapeData, setPendingShapeData] = useState<ShapeData | null>(null);
+  const [isClassAssignmentDialogOpen, setIsClassAssignmentDialogOpen] = useState(false);
+
   const { toast } = useToast();
 
   const handleImageUpload = (file: File, dataUrl: string, dimensions: ImageDimensions) => {
     setImageFile(file);
     setImageSrc(dataUrl);
     setImageDimensions(dimensions);
-    setAnnotations([]); // Reset annotations for new image
-    // Do not reset annotationClasses, they can be global to the session
+    setAnnotations([]); 
     toast({ title: "Image Loaded", description: `${file.name} is ready for annotation.` });
-  };
-
-  const handleAddAnnotation = (newAnnotation: Annotation) => {
-    setAnnotations(prev => [...prev, newAnnotation]);
   };
 
   const handleAnnotationsChange = useCallback((updatedAnnotations: Annotation[]) => {
     setAnnotations(updatedAnnotations);
   }, []);
 
+  const handleShapeDrawn = (shape: ShapeData) => {
+    if (annotationClasses.length === 0) {
+      toast({
+        title: "No Classes Defined",
+        description: "Please create at least one annotation class before drawing.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setPendingShapeData(shape);
+    setIsClassAssignmentDialogOpen(true);
+  };
+
+  const handleAssignClassToShape = (classId: string) => {
+    if (!pendingShapeData) return;
+
+    const newAnnotation: Annotation = {
+      id: crypto.randomUUID(),
+      classId: classId,
+      type: pendingShapeData.type,
+      points: pendingShapeData.points,
+    };
+    setAnnotations(prev => [...prev, newAnnotation]);
+    
+    const assignedClass = annotationClasses.find(ac => ac.id === classId);
+    toast({
+      title: "Annotation Added",
+      description: `Annotation assigned to class: ${assignedClass?.name || 'Unknown'}`,
+    });
+
+    setPendingShapeData(null);
+    setIsClassAssignmentDialogOpen(false);
+  };
 
   const handleCreateClass = (name: string) => {
     const existingClass = annotationClasses.find(ac => ac.name.toLowerCase() === name.toLowerCase());
     if (existingClass) {
-      setSelectedClassId(existingClass.id);
-      toast({ title: "Class Exists", description: `Selected existing class: ${existingClass.name}`});
+      setSelectedClassId(existingClass.id); // Still useful to select it in the toolbar list
+      toast({ title: "Class Exists", description: `Class "${existingClass.name}" already exists.`});
       return;
     }
 
@@ -64,22 +100,24 @@ export default function FieldQuadPage(): JSX.Element {
     };
     colorIndex++;
     setAnnotationClasses(prev => [...prev, newClass]);
-    setSelectedClassId(newClass.id);
-    toast({ title: "Class Created", description: `New class "${name}" added and selected.`});
+    setSelectedClassId(newClass.id); // Select the new class in the toolbar
+    toast({ title: "Class Created", description: `New class "${name}" added.`});
   };
 
   const handleSelectClass = (classId: string) => {
     setSelectedClassId(classId);
-    const selected = annotationClasses.find(ac => ac.id === classId);
-    if (selected) {
-        toast({ title: "Class Selected", description: `Current class: ${selected.name}`});
-    }
+    // const selected = annotationClasses.find(ac => ac.id === classId);
+    // Toasting here might be confusing as it doesn't set class for next annotation.
+    // if (selected) {
+    //     toast({ title: "Class Selected", description: `Viewing class: ${selected.name}`});
+    // }
   };
 
-  // Ensure a class is selected by default if classes exist
   useEffect(() => {
     if (!selectedClassId && annotationClasses.length > 0) {
       setSelectedClassId(annotationClasses[0].id);
+    } else if (selectedClassId && !annotationClasses.find(ac => ac.id === selectedClassId)) {
+      setSelectedClassId(annotationClasses.length > 0 ? annotationClasses[0].id : null);
     }
   }, [annotationClasses, selectedClassId]);
 
@@ -102,8 +140,8 @@ export default function FieldQuadPage(): JSX.Element {
               onToolChange={setCurrentTool}
               annotationClasses={annotationClasses}
               onClassCreate={handleCreateClass}
-              selectedClassId={selectedClassId}
-              onClassSelect={handleSelectClass}
+              selectedClassId={selectedClassId} // For display in toolbar's select
+              onClassSelect={handleSelectClass} // For updating selectedClassId for potential filtering
             />
             <ExportControls
               annotations={annotations}
@@ -119,14 +157,58 @@ export default function FieldQuadPage(): JSX.Element {
               imageDimensions={imageDimensions}
               annotations={annotations}
               currentTool={currentTool}
-              selectedClassId={selectedClassId}
               annotationClasses={annotationClasses}
-              onAnnotationAdd={handleAddAnnotation}
+              onShapeDrawn={handleShapeDrawn}
               onAnnotationsChange={handleAnnotationsChange}
+              // selectedClassId={selectedClassId} // Pass if canvas needs it for highlighting
             />
           </section>
         </div>
       </main>
+
+      <Dialog open={isClassAssignmentDialogOpen} onOpenChange={(isOpen) => {
+          setIsClassAssignmentDialogOpen(isOpen);
+          if (!isOpen) {
+            setPendingShapeData(null); 
+          }
+        }}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Assign Class to Annotation</DialogTitle>
+            <DialogDescription>
+              Select an annotation class for the shape you just drew.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {annotationClasses.length > 0 ? (
+              <ScrollArea className="h-[200px] pr-4">
+                <div className="space-y-2">
+                  {annotationClasses.map((ac) => (
+                    <Button
+                      key={ac.id}
+                      variant="outline"
+                      className="w-full justify-start"
+                      onClick={() => handleAssignClassToShape(ac.id)}
+                    >
+                      <span style={{ backgroundColor: ac.color }} className="mr-2 h-3 w-3 rounded-full inline-block border border-foreground/20 shrink-0"></span>
+                      <span className="truncate">{ac.name}</span>
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
+            ) : (
+              <p>No annotation classes available. Please create one first.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => {
+              setPendingShapeData(null);
+              setIsClassAssignmentDialogOpen(false);
+            }}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Toaster />
     </div>
   );

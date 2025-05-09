@@ -1,8 +1,9 @@
+
 "use client";
 
 import type React from 'react';
 import { useRef, useEffect, useState } from 'react';
-import type { Point, Annotation, AnnotationTool, AnnotationClass, ImageDimensions } from './types';
+import type { Point, Annotation, AnnotationTool, AnnotationClass, ImageDimensions, ShapeData } from './types';
 import { useToast } from "@/hooks/use-toast";
 
 interface AnnotationCanvasProps {
@@ -10,28 +11,24 @@ interface AnnotationCanvasProps {
   imageDimensions: ImageDimensions | null;
   annotations: Annotation[];
   currentTool: AnnotationTool;
-  selectedClassId: string | null;
   annotationClasses: AnnotationClass[];
-  onAnnotationAdd: (annotation: Annotation) => void;
-  onAnnotationUpdate?: (annotation: Annotation) => void; // For future use (move/resize)
+  onShapeDrawn: (shape: ShapeData) => void;
   onAnnotationsChange: (annotations: Annotation[]) => void;
+  // selectedClassId?: string | null; // Optional: if used for highlighting existing annotations
 }
 
-// Helper to generate distinct colors
-const PREDEFINED_COLORS = [
-  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#2AB7CA', 
-  '#F0B67F', '#FE5F55', '#D65DB1', '#845EC2', '#008F7A'
-];
+const TEMP_DRAW_COLOR = '#008080'; // Teal as a default temporary drawing color
+const TEMP_DRAW_FILL_COLOR = `${TEMP_DRAW_COLOR}33`; // Semi-transparent fill
 
 export function AnnotationCanvas({
   imageSrc,
   imageDimensions,
   annotations,
   currentTool,
-  selectedClassId,
   annotationClasses,
-  onAnnotationAdd,
+  onShapeDrawn,
   onAnnotationsChange
+  // selectedClassId 
 }: AnnotationCanvasProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -46,8 +43,6 @@ export function AnnotationCanvas({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas dimensions
-    // For simplicity, display image at natural size. If scaling is needed, this needs adjustment.
     canvas.width = imageDimensions.naturalWidth;
     canvas.height = imageDimensions.naturalHeight;
     
@@ -62,14 +57,13 @@ export function AnnotationCanvas({
       toast({ title: "Error loading image", description: "Could not load the image onto the canvas.", variant: "destructive" });
     }
 
-  }, [imageSrc, imageDimensions, annotations]);
+  }, [imageSrc, imageDimensions, annotations, annotationClasses]); // Added annotationClasses to dependencies if they influence drawing styles of existing annotations
 
 
   const getMousePos = (event: React.MouseEvent<HTMLCanvasElement>): Point => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    // Adjust for potential CSS scaling of the canvas if its display size differs from its drawing surface size
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {
@@ -81,8 +75,8 @@ export function AnnotationCanvas({
   const drawAnnotations = (ctx: CanvasRenderingContext2D) => {
     annotations.forEach(ann => {
       const annClass = annotationClasses.find(ac => ac.id === ann.classId);
-      ctx.strokeStyle = annClass?.color || PREDEFINED_COLORS[0];
-      ctx.fillStyle = annClass ? `${annClass.color}33` : `${PREDEFINED_COLORS[0]}33`; // semi-transparent fill
+      ctx.strokeStyle = annClass?.color || TEMP_DRAW_COLOR;
+      ctx.fillStyle = annClass ? `${annClass.color}33` : TEMP_DRAW_FILL_COLOR;
       ctx.lineWidth = 2;
       ctx.beginPath();
 
@@ -96,9 +90,9 @@ export function AnnotationCanvas({
         ctx.stroke();
         ctx.fill();
         if (annClass) {
-            ctx.fillStyle = annClass.color;
-            ctx.font = "12px Arial";
-            ctx.fillText(annClass.name, minX + 2, minY + 12 > minY + height ? minY +12 : minY + 12);
+            ctx.fillStyle = annClass.color; // For text, use solid color
+            ctx.font = "bold 12px Arial";
+            ctx.fillText(annClass.name, minX + 3, minY + 14 > minY + height ? minY + 14 : minY + 14);
         }
       } else if ((ann.type === 'polygon' || ann.type === 'freehand') && ann.points.length > 1) {
         ctx.moveTo(ann.points[0].x, ann.points[0].y);
@@ -111,19 +105,15 @@ export function AnnotationCanvas({
         ctx.stroke();
         if (ann.type === 'polygon') ctx.fill();
          if (annClass && ann.points.length > 0) {
-            ctx.fillStyle = annClass.color;
-            ctx.font = "12px Arial";
-            ctx.fillText(annClass.name, ann.points[0].x + 2, ann.points[0].y - 5 < 0 ? ann.points[0].y + 12 : ann.points[0].y -5);
+            ctx.fillStyle = annClass.color; // For text, use solid color
+            ctx.font = "bold 12px Arial";
+            ctx.fillText(annClass.name, ann.points[0].x + 3, ann.points[0].y - 5 < 0 ? ann.points[0].y + 14 : ann.points[0].y - 5);
         }
       }
     });
   };
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!selectedClassId) {
-      toast({ title: "No class selected", description: "Please select or create an annotation class first.", variant: "destructive" });
-      return;
-    }
     if (currentTool === 'select' || !imageSrc) return;
 
     const pos = getMousePos(event);
@@ -146,17 +136,14 @@ export function AnnotationCanvas({
 
     const pos = getMousePos(event);
 
-    // Redraw image and existing annotations
     const img = new Image();
-    img.src = imageSrc; // Assuming imageSrc is always valid here
+    img.src = imageSrc; 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     drawAnnotations(ctx);
     
-    // Draw current annotation being created
-    const currentAnnClass = annotationClasses.find(ac => ac.id === selectedClassId);
-    ctx.strokeStyle = currentAnnClass?.color || PREDEFINED_COLORS[0];
-    ctx.fillStyle = currentAnnClass ? `${currentAnnClass.color}33` : `${PREDEFINED_COLORS[0]}33`;
+    ctx.strokeStyle = TEMP_DRAW_COLOR;
+    ctx.fillStyle = TEMP_DRAW_FILL_COLOR;
     ctx.lineWidth = 2;
     ctx.beginPath();
 
@@ -169,73 +156,67 @@ export function AnnotationCanvas({
       ctx.stroke();
       ctx.fill();
     } else if (currentTool === 'freehand') {
-        setCurrentPoints(prev => [...prev, pos]);
-        ctx.moveTo(currentPoints[0].x, currentPoints[0].y);
-        currentPoints.forEach(p => ctx.lineTo(p.x, p.y));
-        ctx.stroke();
+        const tempCurrentPoints = [...currentPoints, pos]; // Use a temporary variable for drawing
+        if (tempCurrentPoints.length > 0) {
+          ctx.moveTo(tempCurrentPoints[0].x, tempCurrentPoints[0].y);
+          tempCurrentPoints.forEach(p => ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+        }
     } else if (currentTool === 'polygon') {
-        ctx.moveTo(currentPoints[0].x, currentPoints[0].y);
-        currentPoints.forEach(p => ctx.lineTo(p.x, p.y));
-        ctx.lineTo(pos.x, pos.y); // Line to current mouse position
-        ctx.stroke();
+        if (currentPoints.length > 0) {
+            ctx.moveTo(currentPoints[0].x, currentPoints[0].y);
+            currentPoints.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.lineTo(pos.x, pos.y); 
+            ctx.stroke();
+        }
     }
   };
 
   const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !startPoint || currentTool === 'select' || !selectedClassId || !imageSrc) return;
+    if (!isDrawing || !startPoint || currentTool === 'select' || !imageSrc) return;
     
     const pos = getMousePos(event);
-    let newAnnotation: Annotation | null = null;
+    let newShape: ShapeData | null = null;
 
     if (currentTool === 'bbox') {
-      newAnnotation = {
-        id: crypto.randomUUID(),
-        classId: selectedClassId,
+      newShape = {
         type: 'bbox',
         points: [startPoint, pos],
       };
     } else if (currentTool === 'freehand') {
-        newAnnotation = {
-            id: crypto.randomUUID(),
-            classId: selectedClassId,
+        newShape = {
             type: 'freehand',
-            points: [...currentPoints, pos],
+            points: [...currentPoints, pos], // Add final point from mouseUp
         };
     }
-    // For polygon, mouse up doesn't finalize. It adds a point. Finalization is on double click or specific action.
-    // For simplicity, let's not implement full polygon drawing in this iteration.
-    // User can click multiple times for polygon, then maybe a button "Finish Polygon" or double click.
 
-    if (newAnnotation) {
-      onAnnotationAdd(newAnnotation);
+    if (newShape) {
+      onShapeDrawn(newShape);
     }
     
-    if (currentTool !== 'polygon') { // Reset for tools other than polygon
+    if (currentTool !== 'polygon') { 
         setIsDrawing(false);
         setStartPoint(null);
         setCurrentPoints([]);
     } else {
-        // For polygon, mouseUp just adds a point if isDrawing is true (meaning dragging to place point)
-        // If not dragging, it's a click, handled in onMouseDown.
-        // This needs more refined logic for polygon completion.
-        // For now, let's simplify and not support dragging for polygon points.
-        setIsDrawing(false); // Reset isDrawing to allow next click to add point
+      // For polygon, mouseUp (if drawing) could mean dragging a point, or just clicking to add.
+      // Current logic is click to add points (handled in onMouseDown), then double click to finish.
+      // So, if isDrawing is true (was dragging), we might want to update the last point if interactive points were a feature.
+      // For now, just reset isDrawing for polygons too, as double-click finalizes.
+      setIsDrawing(false);
     }
   };
   
   const handleDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (currentTool === 'polygon' && currentPoints.length > 2 && selectedClassId) {
-        const newAnnotation: Annotation = {
-            id: crypto.randomUUID(),
-            classId: selectedClassId,
+    if (currentTool === 'polygon' && currentPoints.length > 2) { // Min 3 points for a polygon
+        const newShape: ShapeData = {
             type: 'polygon',
-            points: [...currentPoints],
+            points: [...currentPoints], // Use a copy
         };
-        onAnnotationAdd(newAnnotation);
+        onShapeDrawn(newShape);
         setCurrentPoints([]);
         setIsDrawing(false);
         setStartPoint(null);
-        toast({ title: "Polygon created", description: `Polygon with ${newAnnotation.points.length} points added.`});
     }
   };
 
@@ -248,9 +229,6 @@ export function AnnotationCanvas({
     );
   }
   
-  // Max width/height for canvas container to prevent overly large images from breaking layout
-  // Actual canvas size is set to image natural dimensions for 1:1 pixel mapping.
-  // Container provides scrollbars if image is larger than viewport.
   return (
     <div className="w-full h-[calc(100vh-200px)] md:h-full overflow-auto bg-muted/10 rounded-md shadow-inner relative">
       <canvas
@@ -260,7 +238,7 @@ export function AnnotationCanvas({
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}
         className="cursor-crosshair"
-        style={{ display: 'block' }} // Ensure canvas itself doesn't add extra space
+        style={{ display: 'block' }} 
         data-ai-hint="annotation area"
       />
     </div>

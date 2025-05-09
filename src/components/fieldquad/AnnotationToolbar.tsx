@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -16,8 +17,8 @@ interface AnnotationToolbarProps {
   onToolChange: (tool: AnnotationTool) => void;
   annotationClasses: AnnotationClass[];
   onClassCreate: (name: string) => void;
-  selectedClassId: string | null;
-  onClassSelect: (classId: string) => void;
+  selectedClassId: string | null; // Used to show current selection in dropdown
+  onClassSelect: (classId: string) => void; // Used to update selectedClassId for other purposes (e.g. filtering)
 }
 
 const toolIcons: Record<AnnotationTool, React.ElementType> = {
@@ -67,11 +68,11 @@ export function AnnotationToolbar({
                   key={tool}
                   variant={currentTool === tool ? 'default' : 'outline'}
                   onClick={() => onToolChange(tool)}
-                  className="flex items-center justify-start text-left"
+                  className="flex items-center justify-start text-left whitespace-nowrap"
                   title={toolNames[tool]}
                 >
-                  <Icon className="mr-2 h-4 w-4" />
-                  <span>{toolNames[tool]}</span>
+                  <Icon className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="truncate">{toolNames[tool]}</span>
                 </Button>
               );
             })}
@@ -79,7 +80,9 @@ export function AnnotationToolbar({
         </div>
 
         <div>
-          <Label htmlFor="annotation-class-select" className="mb-2 block text-sm font-medium">Annotation Class</Label>
+          <Label htmlFor="annotation-class-select" className="mb-2 block text-sm font-medium">
+            Annotation Classes
+          </Label>
           {annotationClasses.length > 0 && (
              <Select value={selectedClassId ?? undefined} onValueChange={onClassSelect}>
               <SelectTrigger id="annotation-class-select">
@@ -90,8 +93,8 @@ export function AnnotationToolbar({
                 {annotationClasses.map((ac) => (
                   <SelectItem key={ac.id} value={ac.id}>
                     <div className="flex items-center">
-                      <span style={{ backgroundColor: ac.color }} className="mr-2 h-3 w-3 rounded-full inline-block border border-foreground/20"></span>
-                      {ac.name}
+                      <span style={{ backgroundColor: ac.color }} className="mr-2 h-3 w-3 rounded-full inline-block border border-foreground/20 shrink-0"></span>
+                      <span className="truncate">{ac.name}</span>
                     </div>
                   </SelectItem>
                 ))}
@@ -109,12 +112,12 @@ export function AnnotationToolbar({
               className="text-sm"
             />
             <Button onClick={handleCreateClass} variant="secondary" className="w-full">
-              <PlusSquare className="mr-2 h-4 w-4" /> Add New Class
+              <PlusSquare className="mr-2 h-4 w-4 shrink-0" /> Add New Class
             </Button>
           </div>
            {selectedClassId && annotationClasses.find(ac => ac.id === selectedClassId) && (
             <p className="mt-2 text-xs text-muted-foreground">
-              Selected: <span className="font-semibold">{annotationClasses.find(ac => ac.id === selectedClassId)?.name}</span>
+              Current class for filtering/viewing: <span className="font-semibold truncate">{annotationClasses.find(ac => ac.id === selectedClassId)?.name}</span>
             </p>
           )}
         </div>
