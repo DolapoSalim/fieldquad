@@ -33,4 +33,24 @@
 
 ---
 
+# My Portfolio
+
+This is a portfolio built with Next.js. You can fork this repo and run the app locally.
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed:
+
+- [Node.js](https://nodejs.org/) (v16 or higher)
+- [npm](https://npmjs.com/) (comes with Node.js)
+
+## Steps to Run Locally
+
+1. **Fork the Repo**: Click the "Fork" button at the top right of this page to create a copy of the repository in your GitHub account.
+
+2. **Clone Your Fork**: Clone the forked repository to your local machine.
+
+   ```bash
+   git clone /add repo link/
+   cd your-forked-repo
 
