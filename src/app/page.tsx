@@ -32,10 +32,12 @@ export default function FieldQuadPage(): JSX.Element {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationClasses, setAnnotationClasses] = useState<AnnotationClass[]>([]);
   const [currentTool, setCurrentTool] = useState<AnnotationTool>('bbox');
-  const [selectedClassId, setSelectedClassId] = useState<string | null>(null); // For highlighting/filtering, not new annotations
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null); 
   
   const [pendingShapeData, setPendingShapeData] = useState<ShapeData | null>(null);
   const [isClassAssignmentDialogOpen, setIsClassAssignmentDialogOpen] = useState(false);
+
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
 
   const { toast } = useToast();
 
@@ -44,6 +46,7 @@ export default function FieldQuadPage(): JSX.Element {
     setImageSrc(dataUrl);
     setImageDimensions(dimensions);
     setAnnotations([]); 
+    setSelectedAnnotationId(null);
     toast({ title: "Image Loaded", description: `${file.name} is ready for annotation.` });
   };
 
@@ -62,6 +65,7 @@ export default function FieldQuadPage(): JSX.Element {
     }
     setPendingShapeData(shape);
     setIsClassAssignmentDialogOpen(true);
+    setSelectedAnnotationId(null); // Deselect any annotation when drawing a new one
   };
 
   const handleAssignClassToShape = (classId: string) => {
@@ -88,7 +92,7 @@ export default function FieldQuadPage(): JSX.Element {
   const handleCreateClass = (name: string) => {
     const existingClass = annotationClasses.find(ac => ac.name.toLowerCase() === name.toLowerCase());
     if (existingClass) {
-      setSelectedClassId(existingClass.id); // Still useful to select it in the toolbar list
+      setSelectedClassId(existingClass.id); 
       toast({ title: "Class Exists", description: `Class "${existingClass.name}" already exists.`});
       return;
     }
@@ -100,13 +104,43 @@ export default function FieldQuadPage(): JSX.Element {
     };
     colorIndex++;
     setAnnotationClasses(prev => [...prev, newClass]);
-    setSelectedClassId(newClass.id); // Select the new class in the toolbar
+    setSelectedClassId(newClass.id); 
     toast({ title: "Class Created", description: `New class "${name}" added.`});
   };
 
-  const handleSelectClass = (classId: string) => {
+  const handleSelectClassForToolbar = (classId: string) => {
     setSelectedClassId(classId);
   };
+
+  const handleSelectAnnotation = useCallback((id: string | null) => {
+    setSelectedAnnotationId(id);
+    if (id) {
+      setCurrentTool('select'); // Switch to select tool when an annotation is selected
+    }
+  }, []);
+
+  const handleDeleteSelectedAnnotation = useCallback(() => {
+    if (!selectedAnnotationId) return;
+    setAnnotations(prev => prev.filter(ann => ann.id !== selectedAnnotationId));
+    setSelectedAnnotationId(null);
+    toast({ title: "Annotation Deleted" });
+  }, [selectedAnnotationId]);
+
+  // Effect to handle 'Delete' or 'Backspace' key press for deleting selected annotation
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (selectedAnnotationId && (event.key === 'Delete' || event.key === 'Backspace')) {
+        event.preventDefault(); // Prevent browser back navigation on backspace
+        handleDeleteSelectedAnnotation();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedAnnotationId, handleDeleteSelectedAnnotation]);
+
 
   useEffect(() => {
     if (!selectedClassId && annotationClasses.length > 0) {
@@ -115,6 +149,14 @@ export default function FieldQuadPage(): JSX.Element {
       setSelectedClassId(annotationClasses.length > 0 ? annotationClasses[0].id : null);
     }
   }, [annotationClasses, selectedClassId]);
+
+  // When tool changes, deselect annotation unless the new tool is 'select'
+  useEffect(() => {
+    if (currentTool !== 'select' && selectedAnnotationId) {
+      setSelectedAnnotationId(null);
+    }
+  }, [currentTool, selectedAnnotationId]);
+
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -135,8 +177,10 @@ export default function FieldQuadPage(): JSX.Element {
               onToolChange={setCurrentTool}
               annotationClasses={annotationClasses}
               onClassCreate={handleCreateClass}
-              selectedClassId={selectedClassId}
-              onClassSelect={handleSelectClass}
+              selectedClassIdForNewAnnotation={selectedClassId} // Renamed for clarity
+              onClassSelectForToolbar={handleSelectClassForToolbar} // Renamed for clarity
+              selectedAnnotationId={selectedAnnotationId}
+              onDeleteSelectedAnnotation={handleDeleteSelectedAnnotation}
             />
             <ExportControls
               annotations={annotations}
@@ -155,6 +199,8 @@ export default function FieldQuadPage(): JSX.Element {
               annotationClasses={annotationClasses}
               onShapeDrawn={handleShapeDrawn}
               onAnnotationsChange={handleAnnotationsChange}
+              selectedAnnotationId={selectedAnnotationId}
+              onSelectAnnotation={handleSelectAnnotation}
             />
           </section>
         </div>
@@ -207,3 +253,5 @@ export default function FieldQuadPage(): JSX.Element {
     </div>
   );
 }
+
+    

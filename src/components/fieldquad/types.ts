@@ -35,3 +35,11 @@ export interface ShapeData {
 }
 
 export type ExportFormat = 'original' | 'normalized';
+
+export type CoordinateExportType = 
+  | 'txt_original' 
+  | 'txt_normalized' 
+  | 'json_original' 
+  | 'json_normalized';
+
+    

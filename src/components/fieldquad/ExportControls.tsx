@@ -4,7 +4,7 @@
 import type React from 'react';
 import { Button } from '@/components/ui/button';
 import { DownloadCloud } from 'lucide-react';
-import type { Annotation, AnnotationClass, ImageDimensions, Point, ExportFormat } from './types';
+import type { Annotation, AnnotationClass, ImageDimensions, Point, ExportFormat, CoordinateExportType } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from '@/components/ui/separator';
@@ -13,6 +13,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 
 interface ExportControlsProps {
@@ -49,7 +51,7 @@ function calculateSingleAnnotationArea(annotation: Annotation): number {
   return 0;
 }
 
-type CoverageExportFormat = 'json' | 'txt' | 'csv'; // csv for xlsx
+type CoverageExportFormat = 'json' | 'txt' | 'csv';
 
 interface CoverageDataItem {
   classId: string;
@@ -76,7 +78,7 @@ export function ExportControls({
   annotations,
   annotationClasses,
   imageDimensions,
-  imageName = "annotated_image" // Default without extension
+  imageName = "annotated_image"
 }: ExportControlsProps): JSX.Element {
   const { toast } = useToast();
 
@@ -84,19 +86,20 @@ export function ExportControls({
     return imageName.includes('.') ? imageName.substring(0, imageName.lastIndexOf('.')) : imageName;
   }
 
-  const formatCoordinatesForExport = (points: Point[], format: ExportFormat, currentImageDimensions: ImageDimensions): string => {
-    return points.map(p => {
-      let x = p.x;
-      let y = p.y;
-      if (format === 'normalized') {
-        x = currentImageDimensions.naturalWidth > 0 ? p.x / currentImageDimensions.naturalWidth : 0;
-        y = currentImageDimensions.naturalHeight > 0 ? p.y / currentImageDimensions.naturalHeight : 0;
-      }
-      return `${x.toFixed(format === 'normalized' ? 6 : 2)} ${y.toFixed(format === 'normalized' ? 6 : 2)}`;
-    }).join(' ');
+  const formatPointForExport = (point: Point, coordFormat: ExportFormat, currentImageDimensions: ImageDimensions): Point => {
+    let x = point.x;
+    let y = point.y;
+    if (coordFormat === 'normalized') {
+      x = currentImageDimensions.naturalWidth > 0 ? point.x / currentImageDimensions.naturalWidth : 0;
+      y = currentImageDimensions.naturalHeight > 0 ? point.y / currentImageDimensions.naturalHeight : 0;
+      // Ensure normalized coordinates are formatted to a reasonable precision, e.g., 6 decimal places
+      return { x: parseFloat(x.toFixed(6)), y: parseFloat(y.toFixed(6)) };
+    }
+    // For original, round to 2 decimal places or keep as is if integers
+    return { x: parseFloat(x.toFixed(2)), y: parseFloat(y.toFixed(2)) };
   };
 
-  const generateTxtAnnotationFileContent = (format: ExportFormat, currentImageDimensions: ImageDimensions): string => {
+  const generateTxtAnnotationFileContent = (coordFormat: ExportFormat, currentImageDimensions: ImageDimensions): string => {
     const totalImageArea = currentImageDimensions.naturalWidth * currentImageDimensions.naturalHeight;
     const classAreaMap = new Map<string, number>();
     annotations.forEach(ann => {
@@ -106,9 +109,9 @@ export function ExportControls({
 
     let fileContent = `# Image: ${imageName}\n`;
     fileContent += `# Image Size: ${currentImageDimensions.naturalWidth}x${currentImageDimensions.naturalHeight} pixels\n`;
-    fileContent += `# Export Format: ${format} coordinates\n`;
+    fileContent += `# Export Format: ${coordFormat} coordinates\n`;
     
-    fileContent += `# Classes (ID: Name - Coverage %):\n`;
+    fileContent += `# Classes (ID: Name - Approx. Coverage %):\n`;
     const classIdToNumericIdMap = new Map<string, number>();
     annotationClasses.forEach((ac, index) => {
       classIdToNumericIdMap.set(ac.id, index);
@@ -126,18 +129,56 @@ export function ExportControls({
       let pointsToExport = ann.points;
       if (ann.type === 'bbox' && ann.points.length === 2) {
           const [p1, p2] = ann.points;
-          const minX = Math.min(p1.x, p2.x);
-          const minY = Math.min(p1.y, p2.y);
-          const maxX = Math.max(p1.x, p2.x);
-          const maxY = Math.max(p1.y, p2.y);
-          pointsToExport = [{x: minX, y: minY}, {x: maxX, y: maxY}];
+          pointsToExport = [{x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)}, {x: Math.max(p1.x, p2.x), y: Math.max(p1.y, p2.y)}];
       }
       
-      const coordsStr = formatCoordinatesForExport(pointsToExport, format, currentImageDimensions);
+      const coordsStr = pointsToExport.map(p => {
+        const formattedP = formatPointForExport(p, coordFormat, currentImageDimensions);
+        return `${formattedP.x} ${formattedP.y}`;
+      }).join(' ');
       fileContent += `${numericClassId} ${coordsStr}\n`;
     });
     return fileContent;
   };
+  
+  const generateJsonAnnotationFileContent = (coordFormat: ExportFormat, currentImageDimensions: ImageDimensions): string => {
+    const classIdToNumericIdMap = new Map<string, number>();
+    const formattedAnnotationClasses = annotationClasses.map((ac, index) => {
+        classIdToNumericIdMap.set(ac.id, index);
+        return { id: index, name: ac.name, color: ac.color };
+    });
+
+    const formattedAnnotations = annotations.map(ann => {
+        const numericClassId = classIdToNumericIdMap.get(ann.classId);
+        if (numericClassId === undefined) return null;
+
+        let pointsToExport = ann.points;
+        if (ann.type === 'bbox' && ann.points.length === 2) {
+            const [p1, p2] = ann.points;
+            pointsToExport = [{x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)}, {x: Math.max(p1.x, p2.x), y: Math.max(p1.y, p2.y)}];
+        }
+        
+        return {
+            classId: numericClassId,
+            type: ann.type,
+            points: pointsToExport.map(p => formatPointForExport(p, coordFormat, currentImageDimensions))
+        };
+    }).filter(ann => ann !== null);
+
+    const outputData = {
+        imageInfo: {
+            name: imageName,
+            width: currentImageDimensions.naturalWidth,
+            height: currentImageDimensions.naturalHeight,
+        },
+        format: coordFormat,
+        annotationClasses: formattedAnnotationClasses,
+        annotations: formattedAnnotations,
+    };
+
+    return JSON.stringify(outputData, null, 2);
+  };
+
 
   const downloadFile = (content: string, filename: string, type: string) => {
     const blob = new Blob([content], { type });
@@ -152,7 +193,7 @@ export function ExportControls({
     toast({ title: "Export Successful", description: `Annotations downloaded as ${filename}` });
   }
 
-  const handleExportAnnotationsTXT = (format: ExportFormat) => {
+  const handleExportCoordinates = (exportType: CoordinateExportType) => {
     if (!imageDimensions || imageDimensions.naturalWidth === 0 || imageDimensions.naturalHeight === 0) {
       toast({ title: "Cannot Export", description: "Image dimensions are not available or invalid.", variant: "destructive" });
       return;
@@ -162,10 +203,37 @@ export function ExportControls({
       return;
     }
 
-    const fileContent = generateTxtAnnotationFileContent(format, imageDimensions);
     const sanitizedBaseName = getSanitizedImageName();
-    const filename = `${sanitizedBaseName}_annotations_${format}.txt`;
-    downloadFile(fileContent, filename, 'text/plain;charset=utf-8');
+    let fileContent = "";
+    let filename = "";
+    let mimeType = "";
+
+    switch (exportType) {
+        case 'txt_original':
+            fileContent = generateTxtAnnotationFileContent('original', imageDimensions);
+            filename = `${sanitizedBaseName}_annotations_original.txt`;
+            mimeType = 'text/plain;charset=utf-8';
+            break;
+        case 'txt_normalized':
+            fileContent = generateTxtAnnotationFileContent('normalized', imageDimensions);
+            filename = `${sanitizedBaseName}_annotations_normalized.txt`;
+            mimeType = 'text/plain;charset=utf-8';
+            break;
+        case 'json_original':
+            fileContent = generateJsonAnnotationFileContent('original', imageDimensions);
+            filename = `${sanitizedBaseName}_annotations_original.json`;
+            mimeType = 'application/json;charset=utf-8';
+            break;
+        case 'json_normalized':
+            fileContent = generateJsonAnnotationFileContent('normalized', imageDimensions);
+            filename = `${sanitizedBaseName}_annotations_normalized.json`;
+            mimeType = 'application/json;charset=utf-8';
+            break;
+        default:
+            toast({title: "Error", description: "Invalid export type selected.", variant: "destructive"});
+            return;
+    }
+    downloadFile(fileContent, filename, mimeType);
   };
 
   const prepareCoverageData = (): PreparedCoverageData | null => {
@@ -177,7 +245,6 @@ export function ExportControls({
          toast({ title: "No Classes", description: "No annotation classes defined to calculate coverage.", variant: "default" });
          return null;
     }
-
 
     const totalImageArea = imageDimensions.naturalWidth * imageDimensions.naturalHeight;
     
@@ -241,29 +308,14 @@ export function ExportControls({
   const handleExportCoverage = (format: CoverageExportFormat) => {
     const coverageData = prepareCoverageData();
     if (!coverageData) {
-      // prepareCoverageData already shows a toast if there's an issue (e.g. no image dimensions, no classes)
-      if(annotationClasses.length > 0 && annotations.length === 0 && imageDimensions) {
-         // Special case: classes exist, annotations are zero, but dimensions are fine. Export empty/zeroed stats.
-         // The toast in prepareCoverageData might not fire for this specific scenario if it only checks for class length.
-         // However, if prepareCoverageData returns null, we should not proceed.
-         // Let's ensure that if we get this far, it means we have some data to format, even if it's all zeros.
-         // The current prepareCoverageData will return data even with 0 annotations if classes exist.
-      } else if (!imageDimensions || annotationClasses.length === 0) {
-         // If prepareCoverageData returned null due to missing image dimensions or no classes, we've already toasted.
-         return;
-      }
-      // If annotations are zero, but classes exist, coverageData will be generated with zeros.
+      return;
     }
-
 
     if (coverageData.coverageStatistics.length === 0 && annotations.length > 0) {
         toast({ title: "Error", description: "Could not match annotations to classes for coverage export.", variant: "destructive" });
         return;
     }
     
-    // If annotations.length is 0 AND annotationClasses.length > 0, coverageData will have entries for each class with 0 coverage.
-    // This is acceptable for export.
-
     const fileContent = generateCoverageFileContent(coverageData, format);
     const sanitizedBaseName = getSanitizedImageName();
     let filename = `${sanitizedBaseName}_coverage`;
@@ -278,7 +330,7 @@ export function ExportControls({
         filename += '.txt';
         mimeType = 'text/plain;charset=utf-8';
         break;
-      case 'csv': // For XLSX, we'll provide CSV
+      case 'csv':
         filename += '.csv';
         mimeType = 'text/csv;charset=utf-8';
         break;
@@ -297,25 +349,35 @@ export function ExportControls({
       </CardHeader>
       <CardContent className="space-y-3">
         <div>
-          <h4 className="text-sm font-medium mb-2">Annotation Coordinates (.txt)</h4>
-          <div className="space-y-2">
-            <Button 
-              onClick={() => handleExportAnnotationsTXT('original')} 
-              className="w-full" 
-              variant="outline"
-              disabled={commonAnnotationExportDisabled}
-            >
-              Original Coordinates
-            </Button>
-            <Button 
-              onClick={() => handleExportAnnotationsTXT('normalized')} 
-              className="w-full" 
-              variant="outline"
-              disabled={commonAnnotationExportDisabled}
-            >
-              Normalized Coordinates
-            </Button>
-          </div>
+          <h4 className="text-sm font-medium mb-2">Annotation Coordinates</h4>
+           <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                className="w-full"
+                variant="outline"
+                disabled={commonAnnotationExportDisabled}
+              >
+                Export Coordinates As...
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56">
+                <DropdownMenuLabel>TXT Format</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => handleExportCoordinates('txt_original')}>
+                    Original Coordinates (.txt)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExportCoordinates('txt_normalized')}>
+                    Normalized Coordinates (.txt)
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>JSON Format</DropdownMenuLabel>
+                 <DropdownMenuItem onClick={() => handleExportCoordinates('json_original')}>
+                    Original Coordinates (.json)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExportCoordinates('json_normalized')}>
+                    Normalized Coordinates (.json)
+                </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <Separator />
         <div>
@@ -357,3 +419,5 @@ export function ExportControls({
     </Card>
   );
 }
+
+    
