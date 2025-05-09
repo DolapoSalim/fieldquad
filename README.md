@@ -33,5 +33,4 @@
 
 ---
 
-## 📂 Example TXT Output
 
