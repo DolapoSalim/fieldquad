@@ -257,7 +257,10 @@ export function AnnotationCanvas({
   }
   
   return (
-    <div className="w-full h-[calc(100vh-200px)] md:h-full bg-muted/10 rounded-md shadow-inner relative flex items-center justify-center overflow-hidden">
+    <div 
+      className="w-full h-full bg-muted/10 rounded-md shadow-inner relative flex items-center justify-center overflow-hidden"
+      data-ai-hint="annotation canvas container"
+    >
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
@@ -269,6 +272,7 @@ export function AnnotationCanvas({
           display: 'block', 
           maxWidth: '100%',  
           maxHeight: '100%', 
+          objectFit: 'contain', // Ensures the image aspect ratio is maintained and fits within the canvas element
         }}
         data-ai-hint="annotation area"
       />

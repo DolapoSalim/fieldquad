@@ -131,8 +131,8 @@ export default function FieldQuadPage(): JSX.Element {
         </div>
       </header>
       
-      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8">
-        <div className="flex flex-col lg:flex-row gap-6">
+      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col">
+        <div className="flex flex-col lg:flex-row gap-6 flex-1">
           <aside className="w-full lg:w-1/3 xl:w-1/4 space-y-6 flex-shrink-0">
             <ImageUploader onImageUpload={handleImageUpload} />
             <AnnotationToolbar
@@ -151,7 +151,7 @@ export default function FieldQuadPage(): JSX.Element {
             />
           </aside>
           
-          <section className="flex-1 lg:w-2/3 xl:w-3/4 bg-card p-3 md:p-4 rounded-xl shadow-xl min-h-[400px] md:min-h-[500px] lg:min-h-0">
+          <section className="flex-1 lg:w-2/3 xl:w-3/4 bg-card p-3 md:p-4 rounded-xl shadow-xl min-h-[400px] md:min-h-[500px] lg:min-h-0 flex flex-col">
             <AnnotationCanvas
               imageSrc={imageSrc}
               imageDimensions={imageDimensions}
@@ -213,3 +213,4 @@ export default function FieldQuadPage(): JSX.Element {
     </div>
   );
 }
+
