@@ -49,8 +49,7 @@ Before you begin, make sure you have the following installed:
 2. **Clone Your Fork**: Clone the forked repository to your local machine.
 
    ```bash
-   git clone /add repo link/
-   cd your-forked-repo
+   git clone https://github.com/DolapoSalim/fieldquad.git
    ```
 
 3. **Install Dependencies**
