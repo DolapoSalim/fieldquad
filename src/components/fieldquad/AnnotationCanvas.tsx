@@ -43,6 +43,7 @@ export function AnnotationCanvas({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Set canvas logical dimensions to natural image dimensions for accurate drawing
     canvas.width = imageDimensions.naturalWidth;
     canvas.height = imageDimensions.naturalHeight;
     
@@ -57,13 +58,14 @@ export function AnnotationCanvas({
       toast({ title: "Error loading image", description: "Could not load the image onto the canvas.", variant: "destructive" });
     }
 
-  }, [imageSrc, imageDimensions, annotations, annotationClasses]); // Added annotationClasses to dependencies if they influence drawing styles of existing annotations
+  }, [imageSrc, imageDimensions, annotations, annotationClasses, toast]);
 
 
   const getMousePos = (event: React.MouseEvent<HTMLCanvasElement>): Point => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
+    const rect = canvas.getBoundingClientRect(); // Gets the DISPLAYED size and position
+    // Scale mouse coordinates to the canvas's logical (natural) dimensions
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {
@@ -77,7 +79,7 @@ export function AnnotationCanvas({
       const annClass = annotationClasses.find(ac => ac.id === ann.classId);
       ctx.strokeStyle = annClass?.color || TEMP_DRAW_COLOR;
       ctx.fillStyle = annClass ? `${annClass.color}33` : TEMP_DRAW_FILL_COLOR;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2; // Consider scaling line width if canvas is heavily scaled down visually
       ctx.beginPath();
 
       if (ann.type === 'bbox' && ann.points.length === 2) {
@@ -91,7 +93,7 @@ export function AnnotationCanvas({
         ctx.fill();
         if (annClass) {
             ctx.fillStyle = annClass.color; // For text, use solid color
-            ctx.font = "bold 12px Arial";
+            ctx.font = "bold 12px Arial"; // Consider scaling font size
             ctx.fillText(annClass.name, minX + 3, minY + 14 > minY + height ? minY + 14 : minY + 14);
         }
       } else if ((ann.type === 'polygon' || ann.type === 'freehand') && ann.points.length > 1) {
@@ -106,7 +108,7 @@ export function AnnotationCanvas({
         if (ann.type === 'polygon') ctx.fill();
          if (annClass && ann.points.length > 0) {
             ctx.fillStyle = annClass.color; // For text, use solid color
-            ctx.font = "bold 12px Arial";
+            ctx.font = "bold 12px Arial"; // Consider scaling font size
             ctx.fillText(annClass.name, ann.points[0].x + 3, ann.points[0].y - 5 < 0 ? ann.points[0].y + 14 : ann.points[0].y - 5);
         }
       }
@@ -138,13 +140,14 @@ export function AnnotationCanvas({
 
     const img = new Image();
     img.src = imageSrc; 
+    // Redraw image and existing annotations before drawing temporary shape
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     drawAnnotations(ctx);
     
     ctx.strokeStyle = TEMP_DRAW_COLOR;
     ctx.fillStyle = TEMP_DRAW_FILL_COLOR;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2; // Consider scaling
     ctx.beginPath();
 
     if (currentTool === 'bbox') {
@@ -156,7 +159,7 @@ export function AnnotationCanvas({
       ctx.stroke();
       ctx.fill();
     } else if (currentTool === 'freehand') {
-        const tempCurrentPoints = [...currentPoints, pos]; // Use a temporary variable for drawing
+        const tempCurrentPoints = [...currentPoints, pos]; 
         if (tempCurrentPoints.length > 0) {
           ctx.moveTo(tempCurrentPoints[0].x, tempCurrentPoints[0].y);
           tempCurrentPoints.forEach(p => ctx.lineTo(p.x, p.y));
@@ -186,7 +189,7 @@ export function AnnotationCanvas({
     } else if (currentTool === 'freehand') {
         newShape = {
             type: 'freehand',
-            points: [...currentPoints, pos], // Add final point from mouseUp
+            points: [...currentPoints, pos], 
         };
     }
 
@@ -199,11 +202,7 @@ export function AnnotationCanvas({
         setStartPoint(null);
         setCurrentPoints([]);
     } else {
-      // For polygon, mouseUp (if drawing) could mean dragging a point, or just clicking to add.
-      // Current logic is click to add points (handled in onMouseDown), then double click to finish.
-      // So, if isDrawing is true (was dragging), we might want to update the last point if interactive points were a feature.
-      // For now, just reset isDrawing for polygons too, as double-click finalizes.
-      setIsDrawing(false);
+      setIsDrawing(false); // For polygon, mouseUp adds a point if not dragging, or finishes drag for a point. Double click finalizes.
     }
   };
   
@@ -211,7 +210,7 @@ export function AnnotationCanvas({
     if (currentTool === 'polygon' && currentPoints.length > 2) { // Min 3 points for a polygon
         const newShape: ShapeData = {
             type: 'polygon',
-            points: [...currentPoints], // Use a copy
+            points: [...currentPoints], 
         };
         onShapeDrawn(newShape);
         setCurrentPoints([]);
@@ -229,8 +228,11 @@ export function AnnotationCanvas({
     );
   }
   
+  // Parent div controls the visual box for the canvas.
+  // Canvas itself is scaled using CSS maxWidth/maxHeight while its attributes (width/height)
+  // remain image's natural dimensions for correct coordinate system.
   return (
-    <div className="w-full h-[calc(100vh-200px)] md:h-full overflow-auto bg-muted/10 rounded-md shadow-inner relative">
+    <div className="w-full h-[calc(100vh-200px)] md:h-full bg-muted/10 rounded-md shadow-inner relative flex items-center justify-center overflow-hidden">
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
@@ -238,9 +240,16 @@ export function AnnotationCanvas({
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}
         className="cursor-crosshair"
-        style={{ display: 'block' }} 
+        style={{
+          display: 'block', // Important for layout and scaling
+          maxWidth: '100%',  // Scale down to fit parent width
+          maxHeight: '100%', // Scale down to fit parent height
+          // width: 'auto', // Browser will maintain aspect ratio based on intrinsic (attribute) dimensions
+          // height: 'auto', // and max-width/max-height constraints
+        }}
         data-ai-hint="annotation area"
       />
     </div>
   );
 }
+
