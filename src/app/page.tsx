@@ -106,11 +106,6 @@ export default function FieldQuadPage(): JSX.Element {
 
   const handleSelectClass = (classId: string) => {
     setSelectedClassId(classId);
-    // const selected = annotationClasses.find(ac => ac.id === classId);
-    // Toasting here might be confusing as it doesn't set class for next annotation.
-    // if (selected) {
-    //     toast({ title: "Class Selected", description: `Viewing class: ${selected.name}`});
-    // }
   };
 
   useEffect(() => {
@@ -122,7 +117,7 @@ export default function FieldQuadPage(): JSX.Element {
   }, [annotationClasses, selectedClassId]);
 
   return (
-    <div className="flex flex-col min-h-screen bg-background">
+    <div className="flex flex-col h-full bg-background">
       <header className="bg-primary text-primary-foreground p-4 shadow-lg sticky top-0 z-50">
         <div className="container mx-auto flex items-center">
           <Leaf className="h-8 w-8 mr-3"/>
@@ -131,17 +126,17 @@ export default function FieldQuadPage(): JSX.Element {
         </div>
       </header>
       
-      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col">
-        <div className="flex flex-col lg:flex-row gap-6 flex-1">
-          <aside className="w-full lg:w-1/3 xl:w-1/4 space-y-6 flex-shrink-0">
+      <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col overflow-hidden">
+        <div className="flex flex-col lg:flex-row gap-6 flex-1 overflow-hidden">
+          <aside className="w-full lg:w-80 xl:w-96 space-y-6 flex-shrink-0 overflow-y-auto">
             <ImageUploader onImageUpload={handleImageUpload} />
             <AnnotationToolbar
               currentTool={currentTool}
               onToolChange={setCurrentTool}
               annotationClasses={annotationClasses}
               onClassCreate={handleCreateClass}
-              selectedClassId={selectedClassId} // For display in toolbar's select
-              onClassSelect={handleSelectClass} // For updating selectedClassId for potential filtering
+              selectedClassId={selectedClassId}
+              onClassSelect={handleSelectClass}
             />
             <ExportControls
               annotations={annotations}
@@ -151,7 +146,7 @@ export default function FieldQuadPage(): JSX.Element {
             />
           </aside>
           
-          <section className="flex-1 lg:w-2/3 xl:w-3/4 bg-card p-3 md:p-4 rounded-xl shadow-xl min-h-[400px] md:min-h-[500px] lg:min-h-0 flex flex-col">
+          <section className="flex-1 bg-card p-3 md:p-4 rounded-xl shadow-xl min-h-[300px] md:min-h-[400px] lg:min-h-0 flex flex-col overflow-hidden">
             <AnnotationCanvas
               imageSrc={imageSrc}
               imageDimensions={imageDimensions}
@@ -160,7 +155,6 @@ export default function FieldQuadPage(): JSX.Element {
               annotationClasses={annotationClasses}
               onShapeDrawn={handleShapeDrawn}
               onAnnotationsChange={handleAnnotationsChange}
-              // selectedClassId={selectedClassId} // Pass if canvas needs it for highlighting
             />
           </section>
         </div>
@@ -213,4 +207,3 @@ export default function FieldQuadPage(): JSX.Element {
     </div>
   );
 }
-
