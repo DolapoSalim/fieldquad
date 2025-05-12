@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -5,17 +6,19 @@ import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { UploadCloud, X, LayoutGrid, List } from 'lucide-react';
+import { UploadCloud, X, LayoutGrid, List, Crop } from 'lucide-react'; // Added Crop icon
 import type { ImageDimensions, ImageState } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ImageUploaderProps {
   onBatchUpload: (imageStates: ImageState[]) => void;
   onImageSelect: (id: string) => void;
-  onImageRemove: (id: string) => void; // Added prop for removing images
+  onImageRemove: (id: string) => void;
+  onImageCrop: (id: string) => void; // Added prop for initiating crop
   batchImages: ImageState[];
   activeImageId: string | null;
 }
@@ -25,7 +28,8 @@ type ViewMode = 'list' | 'grid';
 export function ImageUploader({
   onBatchUpload,
   onImageSelect,
-  onImageRemove, // Receive the remove handler
+  onImageRemove,
+  onImageCrop, // Receive the crop handler
   batchImages = [],
   activeImageId
 }: ImageUploaderProps): JSX.Element {
@@ -45,7 +49,7 @@ export function ImageUploader({
         toast({ title: "Duplicate Image", description: `Image "${file.name}" is already in the batch.`, variant: "default" });
         continue; // Skip this file
       }
-      
+
       if (!file.type.startsWith('image/')) {
         toast({ title: "Invalid File", description: `${file.name} is not an image.`, variant: "destructive" });
         continue;
@@ -68,6 +72,7 @@ export function ImageUploader({
                 naturalHeight: img.naturalHeight,
               },
               annotations: [], // Initialize with empty annotations
+              cropArea: null, // Initialize cropArea
             };
             newImageStates.push(imageState);
             resolve();
@@ -144,6 +149,7 @@ export function ImageUploader({
           <div className="mt-4 space-y-2">
             <Label>Batch Images ({batchImages.length})</Label>
             <ScrollArea className="h-48 w-full rounded-md border p-1 custom-scrollbar">
+             <TooltipProvider delayDuration={300}>
               <div
                 className={cn(
                   "p-1",
@@ -156,9 +162,10 @@ export function ImageUploader({
                     className={cn(
                       "relative group border rounded-md cursor-pointer transition-colors overflow-hidden",
                       activeImageId === imgState.id ? "bg-accent/20 border-primary ring-1 ring-primary" : "bg-background hover:bg-muted/50",
-                      viewMode === 'list' ? "flex items-center justify-between p-2" : "aspect-square flex items-center justify-center"
+                      viewMode === 'list' ? "flex items-center justify-between p-2 pr-10" : "aspect-square flex items-center justify-center" // Adjusted padding for list view buttons
                     )}
                     onClick={() => onImageSelect(imgState.id)}
+                    style={{ position: 'relative' }} // Ensure relative positioning for absolute children
                   >
                     {/* Image Preview */}
                     <img
@@ -170,10 +177,24 @@ export function ImageUploader({
                       )}
                       data-ai-hint="batch thumbnail"
                     />
+                    {/* Cropped Indicator */}
+                    {imgState.cropArea && (
+                       <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Crop size={12} className={cn(
+                                "absolute text-primary bg-background/70 rounded p-0.5",
+                                viewMode === 'list' ? "left-1 top-1" : "left-1 top-1"
+                             )} />
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" align="start" className="text-xs">
+                            Image is Cropped
+                        </TooltipContent>
+                       </Tooltip>
+                    )}
 
                      {/* Filename (only for list view or on hover for grid view) */}
                     {viewMode === 'list' && (
-                        <span className="text-sm truncate flex-1 min-w-0 ml-2">{imgState.file.name}</span>
+                        <span className="text-sm truncate flex-1 min-w-0 ml-2 mr-1">{imgState.file.name}</span>
                     )}
                      {viewMode === 'grid' && (
                         <div className="absolute inset-x-0 bottom-0 bg-black/50 p-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
@@ -182,26 +203,60 @@ export function ImageUploader({
                      )}
 
 
-                    {/* Remove Button */}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                          "absolute z-10 h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-full",
-                          viewMode === 'list' ? "right-1 top-1" : "right-1 top-1 bg-background/60 hover:bg-destructive/20",
-                          "opacity-50 group-hover:opacity-100 transition-opacity" // Show on hover
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation(); // Prevent selection when clicking remove
-                        onImageRemove(imgState.id);
-                      }}
-                      aria-label={`Remove ${imgState.file.name}`}
-                    >
-                      <X size={16} />
-                    </Button>
+                    {/* Action Buttons Container */}
+                    <div className={cn(
+                        "absolute z-10 flex items-center",
+                        viewMode === 'list' ? "right-1 top-1/2 -translate-y-1/2 flex-col space-y-1" : "right-1 top-1 flex-col space-y-1",
+                         "opacity-0 group-hover:opacity-100 transition-opacity" // Show on hover
+                    )}>
+                      {/* Crop Button */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                                "h-6 w-6 shrink-0 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-full",
+                                viewMode === 'grid' && "bg-background/60 hover:bg-primary/20",
+                            )}
+                            onClick={(e) => {
+                                e.stopPropagation(); // Prevent selection when clicking crop
+                                onImageCrop(imgState.id);
+                            }}
+                            aria-label={`Crop ${imgState.file.name}`}
+                            >
+                            <Crop size={14} />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side={viewMode === 'list' ? 'left' : 'bottom'} className="text-xs">Crop Image</TooltipContent>
+                       </Tooltip>
+
+                      {/* Remove Button */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                                "h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-full",
+                                viewMode === 'grid' && "bg-background/60 hover:bg-destructive/20",
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent selection when clicking remove
+                              onImageRemove(imgState.id);
+                            }}
+                            aria-label={`Remove ${imgState.file.name}`}
+                          >
+                            <X size={14} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side={viewMode === 'list' ? 'left' : 'bottom'} className="text-xs">Remove Image</TooltipContent>
+                       </Tooltip>
+                    </div>
                   </div>
                 ))}
               </div>
+              </TooltipProvider>
             </ScrollArea>
             <p className="text-xs text-muted-foreground text-center">Click an image to start annotating it.</p>
           </div>

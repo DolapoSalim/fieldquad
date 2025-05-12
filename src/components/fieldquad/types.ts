@@ -19,7 +19,7 @@ export interface Annotation {
   type: Exclude<AnnotationTool, 'select' | 'pan'>; // Exclude 'pan' here too
   // For bbox: [ {x: minX, y: minY}, {x: maxX, y: maxY} ] or two corner points
   // For polygon/freehand: array of points [{x,y}, {x,y}, ...]
-  points: Point[]; 
+  points: Point[];
 }
 
 export interface ImageDimensions {
@@ -37,10 +37,10 @@ export interface ShapeData {
 
 export type ExportFormat = 'original' | 'normalized';
 
-export type CoordinateExportType = 
-  | 'txt_original' 
-  | 'txt_normalized' 
-  | 'json_original' 
+export type CoordinateExportType =
+  | 'txt_original'
+  | 'txt_normalized'
+  | 'json_original'
   | 'json_normalized';
 
 export type CoverageExportFormat = 'json' | 'txt' | 'csv'; // Changed 'xlsx' to 'csv' for simplicity
@@ -52,5 +52,12 @@ export interface ImageState {
   src: string;
   dimensions: ImageDimensions | null;
   annotations: Annotation[];
+  cropArea?: CropArea | null; // Optional: Defines the cropped region { x, y, width, height } in original image pixels
 }
-    
+
+export interface CropArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}

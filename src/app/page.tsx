@@ -7,7 +7,8 @@ import { ImageUploader } from '@/components/fieldquad/ImageUploader';
 import { AnnotationToolbar } from '@/components/fieldquad/AnnotationToolbar';
 import { AnnotationCanvas } from '@/components/fieldquad/AnnotationCanvas';
 import { ExportControls } from '@/components/fieldquad/ExportControls';
-import type { Annotation, AnnotationClass, AnnotationTool, ImageDimensions, Point, ShapeData, ImageState } from '@/components/fieldquad/types';
+import { CropDialog } from '@/components/fieldquad/CropDialog'; // Import CropDialog
+import type { Annotation, AnnotationClass, AnnotationTool, ImageDimensions, Point, ShapeData, ImageState, CropArea } from '@/components/fieldquad/types';
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/use-toast";
 import { Leaf, ImageOff } from 'lucide-react';
@@ -52,6 +53,10 @@ export default function FieldQuadPage(): JSX.Element {
   // Confirmation dialog state
   const [classToDelete, setClassToDelete] = useState<AnnotationClass | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+
+  // Crop Dialog State
+  const [imageToCrop, setImageToCrop] = useState<ImageState | null>(null);
+  const [isCropDialogOpen, setIsCropDialogOpen] = useState(false);
 
 
   const { toast } = useToast();
@@ -126,6 +131,33 @@ export default function FieldQuadPage(): JSX.Element {
   }, [batchImages, activeImageId, toast]);
 
 
+  // --- Crop Handling ---
+
+  const handleOpenCropDialog = (id: string) => {
+    const image = batchImages.find(img => img.id === id);
+    if (image) {
+      setImageToCrop(image);
+      setIsCropDialogOpen(true);
+    }
+  };
+
+  const handleApplyCrop = (imageId: string, newCropArea: CropArea | null) => {
+    setBatchImages(prev =>
+      prev.map(img =>
+        img.id === imageId
+          ? { ...img, cropArea: newCropArea }
+          : img
+      )
+    );
+    setIsCropDialogOpen(false);
+    setImageToCrop(null);
+    toast({
+      title: newCropArea ? "Crop Applied" : "Crop Reset",
+      description: `Crop settings updated for image ${batchImages.find(img => img.id === imageId)?.file.name}.`,
+    });
+  };
+
+
   // --- Derived State for Active Image ---
   const activeImage = useMemo(() => {
     return batchImages.find(img => img.id === activeImageId) || null;
@@ -134,6 +166,8 @@ export default function FieldQuadPage(): JSX.Element {
   const activeImageSrc = activeImage?.src || null;
   const activeImageDimensions = activeImage?.dimensions || null;
   const activeAnnotations = activeImage?.annotations || [];
+  const activeCropArea = activeImage?.cropArea || null;
+
 
   // --- Annotation Handling Callbacks (Modified for Active Image) ---
 
@@ -426,7 +460,8 @@ export default function FieldQuadPage(): JSX.Element {
           <ImageUploader
             onBatchUpload={handleBatchUpload}
             onImageSelect={handleSelectImageFromBatch}
-            onImageRemove={handleRemoveImageFromBatch} // Pass the handler
+            onImageRemove={handleRemoveImageFromBatch}
+            onImageCrop={handleOpenCropDialog} // Pass crop handler
             batchImages={batchImages}
             activeImageId={activeImageId}
           />
@@ -444,7 +479,7 @@ export default function FieldQuadPage(): JSX.Element {
             onOpenEditClassDialog={handleOpenEditClassDialog}
             isAnnotationSelected={!!selectedAnnotationId}
             canAnnotate={!!activeImageId && annotationClasses.length > 0} // Can draw if image active and classes exist
-            activeImageId={activeImageId} // Pass activeImageId
+            activeImageId={activeImageId}
           />
           <ExportControls
             batchImages={batchImages} // Pass the whole batch
@@ -456,8 +491,10 @@ export default function FieldQuadPage(): JSX.Element {
         <section className="flex-1 bg-card p-4 md:p-6 rounded-lg shadow-lg min-h-[300px] md:min-h-[400px] lg:min-h-0 flex flex-col overflow-hidden">
           {activeImageSrc ? (
             <AnnotationCanvas
+              key={activeImageId} // Ensure canvas re-renders fully on image change
               imageSrc={activeImageSrc}
               imageDimensions={activeImageDimensions}
+              cropArea={activeCropArea} // Pass cropArea
               annotations={activeAnnotations}
               currentTool={currentTool}
               annotationClasses={annotationClasses}
@@ -619,6 +656,19 @@ export default function FieldQuadPage(): JSX.Element {
                </AlertDialogFooter>
            </AlertDialogContent>
        </AlertDialog>
+
+        {/* Crop Dialog */}
+        {isCropDialogOpen && imageToCrop && imageToCrop.dimensions && (
+          <CropDialog
+            isOpen={isCropDialogOpen}
+            onClose={() => {
+              setIsCropDialogOpen(false);
+              setImageToCrop(null);
+            }}
+            imageState={imageToCrop}
+            onApplyCrop={handleApplyCrop}
+          />
+        )}
 
 
       <Toaster />
