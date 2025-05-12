@@ -4,21 +4,19 @@
 import type React from 'react';
 import { Button } from '@/components/ui/button';
 import { DownloadCloud } from 'lucide-react';
-import type { Annotation, AnnotationClass, ImageDimensions, Point, ExportFormat, CoordinateExportType, ImageState, CoverageExportFormat, CropArea } from './types';
+import type { Annotation, AnnotationClass, Point, ImageState, CoverageExportFormat, CropArea } from './types'; // Removed unused coordinate types
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from "@/hooks/use-toast";
-import { Separator } from '@/components/ui/separator';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuLabel,
-  DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 
 interface ExportControlsProps {
-  batchImages: ImageState[]; // Changed from single image props
+  batchImages: ImageState[];
   annotationClasses: AnnotationClass[];
 }
 
@@ -50,9 +48,15 @@ function calculateSingleAnnotationArea(annotation: Annotation): number {
   return 0;
 }
 
-// Extended Coverage data structure to include image identifier
+// Extended Coverage data structure to include image identifier and dimensions
 interface CoverageDataItem {
-  imageName: string; // Added
+  imageName: string;
+  effectiveWidth: number;
+  effectiveHeight: number;
+  isCropped: boolean;
+  originalWidth?: number;
+  originalHeight?: number;
+  cropArea?: CropArea | null;
   classId: string;
   className: string;
   numericId: number;
@@ -72,10 +76,6 @@ export function ExportControls({
 }: ExportControlsProps): JSX.Element {
   const { toast } = useToast();
 
-  const getSanitizedImageName = (filename: string): string => {
-    return filename.includes('.') ? filename.substring(0, filename.lastIndexOf('.')) : filename;
-  }
-
   // Get effective dimensions (cropped or original) for an image state
   const getEffectiveDimensions = (imgState: ImageState): { width: number, height: number } | null => {
     if (imgState.cropArea) {
@@ -87,140 +87,86 @@ export function ExportControls({
     return null;
   }
 
-  // Format point for export, considering normalization relative to *effective* dimensions
-  const formatPointForExport = (point: Point, coordFormat: ExportFormat, effectiveDims: { width: number, height: number }): Point => {
-    let x = point.x;
-    let y = point.y;
-    if (coordFormat === 'normalized' && effectiveDims.width > 0 && effectiveDims.height > 0) {
-      x = point.x / effectiveDims.width;
-      y = point.y / effectiveDims.height;
-      // Ensure normalized coordinates are formatted to a reasonable precision
-      return { x: parseFloat(x.toFixed(6)), y: parseFloat(y.toFixed(6)) };
-    }
-    // For original, round to 2 decimal places
-    return { x: parseFloat(x.toFixed(2)), y: parseFloat(y.toFixed(2)) };
-  };
+  // Prepares coverage data including image dimensions
+  const prepareExportData = (): PreparedCoverageData | null => {
+     if (batchImages.length === 0) {
+        toast({ title: "No Images", description: "Upload images to export data.", variant: "default" });
+        return null;
+     }
+     if (annotationClasses.length === 0) {
+         toast({ title: "No Classes", description: "No annotation classes defined to calculate coverage.", variant: "default" });
+         return null;
+     }
+     // Check if all images have effective dimensions
+     const allHaveEffectiveDimensions = batchImages.every(img => getEffectiveDimensions(img));
+     if (!allHaveEffectiveDimensions) {
+        toast({ title: "Missing Data", description: "Some images are missing dimension or crop data. Cannot calculate coverage.", variant: "destructive" });
+        return null;
+     }
 
-  const generateTxtAnnotationFileContent = (coordFormat: ExportFormat): string => {
-    let fileContent = `# Batch Annotation Export\n`;
-    fileContent += `# Annotation Format: class_index x1 y1 x2 y2 ... (bbox/polygon/freehand)\n`;
-    fileContent += `# Coordinate Format: ${coordFormat} (relative to effective image size)\n`;
+     const allExportData: PreparedCoverageData = [];
 
-    const classIdToNumericIdMap = new Map<string, number>();
-    fileContent += `# Classes:\n`;
-    annotationClasses.forEach((ac, index) => {
-      classIdToNumericIdMap.set(ac.id, index);
-      fileContent += `# ${index}: ${ac.name}\n`;
-    });
-    fileContent += '\n';
+     batchImages.forEach(imgState => {
+        const effectiveDims = getEffectiveDimensions(imgState);
+        const { file, annotations, cropArea, dimensions } = imgState;
+        if (!effectiveDims) return; // Skip if somehow still missing
 
-    batchImages.forEach(imgState => {
-      const effectiveDims = getEffectiveDimensions(imgState);
-      if (!effectiveDims || imgState.annotations.length === 0) return; // Skip images with no annotations or dimensions
+        const totalImageArea = effectiveDims.width * effectiveDims.height;
+        if (totalImageArea <= 0) return; // Skip if area is zero or negative
 
-      // Image Header Block
-      fileContent += `## Image: ${imgState.file.name}\n`;
-      fileContent += `## Effective Size: ${effectiveDims.width}x${effectiveDims.height} pixels ${imgState.cropArea ? '(Cropped)' : '(Original)'}\n`;
-      if (imgState.cropArea) {
-          fileContent += `## Crop Area (Original Coords): x=${imgState.cropArea.x}, y=${imgState.cropArea.y}, w=${imgState.cropArea.width}, h=${imgState.cropArea.height}\n`;
-      }
-      if (imgState.dimensions && !imgState.cropArea) {
-         fileContent += `## Original Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight} pixels\n`;
-      } else if (imgState.dimensions && imgState.cropArea) {
-         fileContent += `## Original Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight} pixels\n`;
-      }
+        annotationClasses.forEach((ac, index) => {
+            const annotationsForClass = annotations.filter(ann => ann.classId === ac.id);
+            // Annotation areas are calculated using coordinates relative to the effective area
+            const totalAreaForClass = annotationsForClass.reduce((sum, ann) => sum + calculateSingleAnnotationArea(ann), 0);
+            const percentageCoverage = (totalAreaForClass / totalImageArea) * 100;
 
+            allExportData.push({
+                imageName: file.name,
+                effectiveWidth: effectiveDims.width,
+                effectiveHeight: effectiveDims.height,
+                isCropped: !!cropArea,
+                originalWidth: dimensions?.naturalWidth,
+                originalHeight: dimensions?.naturalHeight,
+                cropArea: cropArea, // Include crop info if present
+                classId: ac.id,
+                className: ac.name,
+                numericId: index,
+                color: ac.color, // Keep color maybe for reference? Or remove? Keep for now.
+                annotationCount: annotationsForClass.length,
+                totalPixelArea: parseFloat(totalAreaForClass.toFixed(2)),
+                percentageCoverage: parseFloat(percentageCoverage.toFixed(2)),
+            });
+        });
 
-      // Annotations for this image
-      imgState.annotations.forEach(ann => {
-        const numericClassId = classIdToNumericIdMap.get(ann.classId);
-        if (numericClassId === undefined) return;
-
-        let pointsToExport = ann.points;
-         // Ensure consistent BBox point order (top-left, bottom-right) for export
-        if (ann.type === 'bbox' && ann.points.length === 2) {
-            const [p1, p2] = ann.points;
-            pointsToExport = [
-                {x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)},
-                {x: Math.max(p1.x, p2.x), y: Math.max(p1.y, p2.y)}
-            ];
+        // If an image has NO annotations, add a row for it with zero coverage for all classes
+        if (imgState.annotations.length === 0) {
+             annotationClasses.forEach((ac, index) => {
+                 allExportData.push({
+                    imageName: file.name,
+                    effectiveWidth: effectiveDims.width,
+                    effectiveHeight: effectiveDims.height,
+                    isCropped: !!cropArea,
+                    originalWidth: dimensions?.naturalWidth,
+                    originalHeight: dimensions?.naturalHeight,
+                    cropArea: cropArea,
+                    classId: ac.id,
+                    className: ac.name,
+                    numericId: index,
+                    color: ac.color,
+                    annotationCount: 0,
+                    totalPixelArea: 0,
+                    percentageCoverage: 0,
+                 });
+             });
         }
+     });
 
-        // Format coordinates relative to the effective dimensions
-        const coordsStr = pointsToExport.map(p => {
-          const formattedP = formatPointForExport(p, coordFormat, effectiveDims);
-          return `${formattedP.x} ${formattedP.y}`;
-        }).join(' ');
-        fileContent += `${numericClassId} ${coordsStr}\n`;
-      });
-       fileContent += '\n'; // Separator between image blocks
-    });
-    return fileContent;
-  };
+     if (allExportData.length === 0) {
+        toast({ title: "No Data", description: "No images or classes available to export data.", variant: "default" });
+        return null;
+     }
 
-  const generateJsonAnnotationFileContent = (coordFormat: ExportFormat): string => {
-    const classIdToNumericIdMap = new Map<string, number>();
-    const formattedAnnotationClasses = annotationClasses.map((ac, index) => {
-        classIdToNumericIdMap.set(ac.id, index);
-        return { id: index, name: ac.name, color: ac.color };
-    });
-
-    const batchData = batchImages.map(imgState => {
-       const effectiveDims = getEffectiveDimensions(imgState);
-       if (!effectiveDims) return null; // Skip images without effective dimensions
-
-       const formattedAnnotations = imgState.annotations.map(ann => {
-           const numericClassId = classIdToNumericIdMap.get(ann.classId);
-           if (numericClassId === undefined) return null;
-
-           let pointsToExport = ann.points;
-           // Ensure consistent BBox point order
-           if (ann.type === 'bbox' && ann.points.length === 2) {
-               const [p1, p2] = ann.points;
-               pointsToExport = [
-                   {x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)},
-                   {x: Math.max(p1.x, p2.x), y: Math.max(p1.y, p2.y)}
-               ];
-           }
-
-           return {
-               classId: numericClassId,
-               type: ann.type,
-               // Format coordinates relative to the effective dimensions
-               points: pointsToExport.map(p => formatPointForExport(p, coordFormat, effectiveDims))
-           };
-       }).filter(ann => ann !== null);
-
-       return {
-           imageInfo: {
-               name: imgState.file.name,
-               width: effectiveDims.width, // Effective width
-               height: effectiveDims.height, // Effective height
-               isCropped: !!imgState.cropArea,
-               cropArea: imgState.cropArea ? { // Report original crop coords
-                    x: imgState.cropArea.x,
-                    y: imgState.cropArea.y,
-                    width: imgState.cropArea.width,
-                    height: imgState.cropArea.height,
-               } : undefined,
-               originalWidth: imgState.dimensions?.naturalWidth,
-               originalHeight: imgState.dimensions?.naturalHeight,
-           },
-           annotations: formattedAnnotations,
-       };
-    }).filter(imgData => imgData !== null); // Filter out skipped images
-
-    const outputData = {
-        batchExportInfo: {
-            format: coordFormat,
-            coordinatesRelativeTo: "effective_image_size",
-            annotationClasses: formattedAnnotationClasses,
-            date: new Date().toISOString(),
-        },
-        images: batchData,
-    };
-
-    return JSON.stringify(outputData, null, 2);
+     return allExportData;
   };
 
 
@@ -237,201 +183,124 @@ export function ExportControls({
     toast({ title: "Export Successful", description: `Data downloaded as ${filename}` });
   }
 
-  const handleExportCoordinates = (exportType: CoordinateExportType) => {
-    if (batchImages.length === 0) {
-       toast({ title: "No Images", description: "Upload images to export annotations.", variant: "default" });
-       return;
-    }
-    const hasAnnotations = batchImages.some(img => img.annotations.length > 0);
-     if (!hasAnnotations) {
-       toast({ title: "No Annotations", description: "There are no annotations in this batch to export.", variant: "default" });
-       return;
-    }
-     // Check if all images (including those without annotations if desired, or just annotated ones) have dimensions/cropArea
-    const allHaveEffectiveDimensions = batchImages.every(img => getEffectiveDimensions(img));
-    if (!allHaveEffectiveDimensions) {
-      toast({ title: "Missing Data", description: "Some images are missing dimension or crop data. Cannot export.", variant: "destructive" });
-      return;
-    }
 
-    const baseFilename = "batch_annotations";
-    let fileContent = "";
-    let filename = "";
-    let mimeType = "";
-
-    switch (exportType) {
-        case 'txt_original':
-            fileContent = generateTxtAnnotationFileContent('original');
-            filename = `${baseFilename}_original.txt`;
-            mimeType = 'text/plain;charset=utf-8';
-            break;
-        case 'txt_normalized':
-            fileContent = generateTxtAnnotationFileContent('normalized');
-            filename = `${baseFilename}_normalized.txt`;
-            mimeType = 'text/plain;charset=utf-8';
-            break;
-        case 'json_original':
-            fileContent = generateJsonAnnotationFileContent('original');
-            filename = `${baseFilename}_original.json`;
-            mimeType = 'application/json;charset=utf-8';
-            break;
-        case 'json_normalized':
-            fileContent = generateJsonAnnotationFileContent('normalized');
-            filename = `${baseFilename}_normalized.json`;
-            mimeType = 'application/json;charset=utf-8';
-            break;
-        default:
-            toast({title: "Error", description: "Invalid export type selected.", variant: "destructive"});
-            return;
-    }
-    downloadFile(fileContent, filename, mimeType);
-  };
-
-  // Prepares coverage data based on effective dimensions
-  const prepareCoverageData = (): PreparedCoverageData | null => {
-     if (batchImages.length === 0) {
-        toast({ title: "No Images", description: "Upload images to calculate coverage.", variant: "default" });
-        return null;
-     }
-     if (annotationClasses.length === 0) {
-         toast({ title: "No Classes", description: "No annotation classes defined to calculate coverage.", variant: "default" });
-         return null;
-     }
-     // Check if all images have effective dimensions
-     const allHaveEffectiveDimensions = batchImages.every(img => getEffectiveDimensions(img));
-     if (!allHaveEffectiveDimensions) {
-        toast({ title: "Missing Data", description: "Some images are missing dimension or crop data. Cannot calculate coverage.", variant: "destructive" });
-        return null;
-     }
-
-     const allCoverageData: PreparedCoverageData = [];
-
-     batchImages.forEach(imgState => {
-        const effectiveDims = getEffectiveDimensions(imgState);
-        const { file, annotations } = imgState;
-        if (!effectiveDims) return; // Skip if somehow still missing
-
-        const totalImageArea = effectiveDims.width * effectiveDims.height;
-        if (totalImageArea <= 0) return; // Skip if area is zero or negative
-
-        annotationClasses.forEach((ac, index) => {
-            const annotationsForClass = annotations.filter(ann => ann.classId === ac.id);
-            // Annotation areas are calculated using coordinates relative to the effective area
-            const totalAreaForClass = annotationsForClass.reduce((sum, ann) => sum + calculateSingleAnnotationArea(ann), 0);
-            const percentageCoverage = (totalAreaForClass / totalImageArea) * 100;
-
-            allCoverageData.push({
-                imageName: file.name,
-                classId: ac.id,
-                className: ac.name,
-                numericId: index,
-                color: ac.color,
-                annotationCount: annotationsForClass.length,
-                totalPixelArea: parseFloat(totalAreaForClass.toFixed(2)),
-                percentageCoverage: parseFloat(percentageCoverage.toFixed(2)),
-            });
-        });
-     });
-
-     const hasAnyAnnotations = batchImages.some(img => img.annotations.length > 0);
-     if (allCoverageData.length === 0 && hasAnyAnnotations) {
-        toast({ title: "Calculation Info", description: "No coverage calculated. Ensure annotations are assigned to existing classes.", variant: "default" });
-        return null;
-     }
-     if (allCoverageData.length === 0 && !hasAnyAnnotations) {
-        toast({ title: "No Annotations", description: "No annotations found in the batch to calculate coverage.", variant: "default" });
-        return null;
-     }
-
-     return allCoverageData;
-  };
-
-  const generateCoverageFileContent = (data: PreparedCoverageData, format: CoverageExportFormat): string => {
+  // Generates file content based on format (TXT, JSON, CSV) containing only dimensions and coverage
+   const generateExportFileContent = (data: PreparedCoverageData, format: CoverageExportFormat): string => {
     if (format === 'json') {
       // Group JSON by image
-      const groupedData: Record<string, {width: number, height: number, isCropped: boolean, originalWidth?: number, originalHeight?: number, coverageStats: Omit<CoverageDataItem, 'imageName'>[]}> = {};
+      const groupedData: Record<string, {
+          imageInfo: {
+              name: string;
+              effectiveWidth: number;
+              effectiveHeight: number;
+              isCropped: boolean;
+              originalWidth?: number;
+              originalHeight?: number;
+              cropArea?: CropArea | null;
+          },
+          coverageStats: Omit<CoverageDataItem, 'imageName' | 'effectiveWidth' | 'effectiveHeight' | 'isCropped' | 'originalWidth' | 'originalHeight' | 'cropArea'>[]
+      }> = {};
+
       data.forEach(item => {
         if (!groupedData[item.imageName]) {
-          const imgState = batchImages.find(img => img.file.name === item.imageName);
-          const effectiveDims = getEffectiveDimensions(imgState!);
           groupedData[item.imageName] = {
-            width: effectiveDims?.width ?? 0, // Effective width
-            height: effectiveDims?.height ?? 0, // Effective height
-            isCropped: !!imgState?.cropArea,
-            originalWidth: imgState?.dimensions?.naturalWidth,
-            originalHeight: imgState?.dimensions?.naturalHeight,
-            coverageStats: []
+             imageInfo: {
+                name: item.imageName,
+                effectiveWidth: item.effectiveWidth,
+                effectiveHeight: item.effectiveHeight,
+                isCropped: item.isCropped,
+                originalWidth: item.originalWidth,
+                originalHeight: item.originalHeight,
+                cropArea: item.cropArea
+             },
+             coverageStats: []
           };
         }
-        const { imageName, ...rest } = item;
-        groupedData[item.imageName].coverageStats.push(rest);
+        const { imageName, effectiveWidth, effectiveHeight, isCropped, originalWidth, originalHeight, cropArea, ...stats } = item;
+        groupedData[item.imageName].coverageStats.push(stats);
       });
+
        const output = {
             batchExportInfo: {
-                format: 'coverage-json',
+                exportType: 'Coverage and Dimensions',
                 coverageRelativeTo: 'effective_image_size',
                 date: new Date().toISOString(),
+                // Include class definitions for context
+                annotationClasses: annotationClasses.map((ac, index) => ({ id: index, name: ac.name, color: ac.color })),
             },
-            images: groupedData
+            images: Object.values(groupedData) // Convert grouped object to array
        }
        return JSON.stringify(output, null, 2);
     }
 
     if (format === 'txt') {
-      let content = `# Batch Coverage Statistics\n`;
+      let content = `# Batch Coverage Statistics & Dimensions\n`;
       content += `# Coverage relative to effective image size\n`;
       content += `# Date: ${new Date().toISOString()}\n\n`;
 
-      batchImages.forEach(imgState => {
-        const effectiveDims = getEffectiveDimensions(imgState);
-        if (!effectiveDims) return; // Skip if no dimensions
+      const imagesProcessed = new Set<string>();
 
-        const imageName = imgState.file.name;
-        const statsForImage = data.filter(stat => stat.imageName === imageName);
-        if (statsForImage.length === 0 && imgState.annotations.length === 0) return; // Skip image if no stats AND no annotations
+      data.forEach(item => {
+         if (imagesProcessed.has(item.imageName)) return; // Already processed this image header
 
-        // Image Header Block
-        content += `## Image: ${imageName}\n`;
-        content += `## Effective Size: ${effectiveDims.width}x${effectiveDims.height} pixels ${imgState.cropArea ? '(Cropped)' : '(Original)'}\n`;
-        if (imgState.cropArea) {
-             content += `## Crop Area (Original Coords): x=${imgState.cropArea.x}, y=${imgState.cropArea.y}, w=${imgState.cropArea.width}, h=${imgState.cropArea.height}\n`;
-        }
-        if (imgState.dimensions) {
-            content += `## Original Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight} pixels\n`;
-        }
-        content += "--------------------\n";
+         // Image Header Block
+         content += `## Image: ${item.imageName}\n`;
+         content += `## Effective Size: ${item.effectiveWidth}x${item.effectiveHeight} pixels ${item.isCropped ? '(Cropped)' : '(Original)'}\n`;
+         if (item.isCropped && item.cropArea) {
+              content += `## Crop Area (Original Coords): x=${item.cropArea.x}, y=${item.cropArea.y}, w=${item.cropArea.width}, h=${item.cropArea.height}\n`;
+         }
+         if (item.originalWidth && item.originalHeight) {
+             content += `## Original Size: ${item.originalWidth}x${item.originalHeight} pixels\n`;
+         }
+         content += "--------------------\n";
+         content += "Class Coverage Stats:\n";
 
-        // Stats for this image
-        if (statsForImage.length > 0) {
-             statsForImage.forEach(stat => {
-                content += `Class Name: ${stat.className}\n`;
-                content += `Annotation Count: ${stat.annotationCount}\n`;
-                content += `Total Pixel Area: ${stat.totalPixelArea.toFixed(2)}\n`;
-                content += `Percentage Coverage: ${stat.percentageCoverage.toFixed(2)}%\n`;
-                content += "--------------------\n";
-            });
-        } else {
-             content += "No annotations found for this image.\n";
-             content += "--------------------\n";
-        }
-        content += '\n'; // Separator between image blocks
+         // Find all stats for this image
+         const statsForImage = data.filter(stat => stat.imageName === item.imageName);
+         if (statsForImage.length > 0) {
+              // Sort stats by class name within the image block
+              statsForImage.sort((a, b) => a.className.localeCompare(b.className)).forEach(stat => {
+                 content += `  Class Name: ${stat.className}\n`;
+                 content += `  Annotation Count: ${stat.annotationCount}\n`;
+                 content += `  Total Pixel Area: ${stat.totalPixelArea.toFixed(2)}\n`;
+                 content += `  Percentage Coverage: ${stat.percentageCoverage.toFixed(2)}%\n`;
+                 content += "  ---\n";
+             });
+         } else {
+              content += "  No annotations found for this image.\n";
+              content += "--------------------\n";
+         }
+          content += '\n'; // Separator between image blocks
+          imagesProcessed.add(item.imageName);
       });
       return content;
     }
 
     if (format === 'csv') {
-        // CSV: Each row IS an image
+        // CSV: Each row IS an image, columns for image info + coverage per class
         const sortedClasses = [...annotationClasses].sort((a, b) => a.name.localeCompare(b.name));
         const classHeaders = sortedClasses.flatMap(ac => [
             `${ac.name}_AnnotationCount`,
             `${ac.name}_TotalPixelArea`,
             `${ac.name}_PercentageCoverage`
         ]);
-        const header = ["ImageName", "EffectiveWidth", "EffectiveHeight", "IsCropped", "OriginalWidth", "OriginalHeight", "CropX", "CropY", "CropWidth", "CropHeight", ...classHeaders].join(',');
+        const header = [
+            "ImageName",
+            "EffectiveWidth",
+            "EffectiveHeight",
+            "IsCropped",
+            "OriginalWidth",
+            "OriginalHeight",
+            "CropX",
+            "CropY",
+            "CropWidth",
+            "CropHeight",
+            ...classHeaders
+        ].join(',');
 
         let csvRows = [header];
 
-        // Group prepared data by image name and class ID
+        // Group prepared data by image name and class ID for easy lookup
         const dataByImageAndClass: Record<string, Record<string, CoverageDataItem>> = {};
         data.forEach(item => {
             if (!dataByImageAndClass[item.imageName]) {
@@ -440,38 +309,29 @@ export function ExportControls({
             dataByImageAndClass[item.imageName][item.classId] = item;
         });
 
-        // Iterate through batch images
-        batchImages.forEach(imgState => {
-            const effectiveDims = getEffectiveDimensions(imgState);
-            if (!effectiveDims) return; // Skip if no effective dimensions
+        // Iterate through unique image names from the prepared data
+        const uniqueImageNames = [...new Set(data.map(item => item.imageName))];
 
-            const imageName = imgState.file.name;
-            const imageWidth = effectiveDims.width;
-            const imageHeight = effectiveDims.height;
-            const isCropped = !!imgState.cropArea;
-            const originalWidth = imgState.dimensions?.naturalWidth ?? '';
-            const originalHeight = imgState.dimensions?.naturalHeight ?? '';
-            const cropX = imgState.cropArea?.x ?? '';
-            const cropY = imgState.cropArea?.y ?? '';
-            const cropWidth = imgState.cropArea?.width ?? '';
-            const cropHeight = imgState.cropArea?.height ?? '';
-
+        uniqueImageNames.forEach(imageName => {
+            // Find the first item for this image to get common image info
+            const imageInfoItem = data.find(item => item.imageName === imageName);
+            if (!imageInfoItem) return; // Should not happen
 
             // Start the row for this image
             const rowData = [
                 imageName,
-                imageWidth.toString(),
-                imageHeight.toString(),
-                isCropped.toString(),
-                originalWidth.toString(),
-                originalHeight.toString(),
-                cropX.toString(),
-                cropY.toString(),
-                cropWidth.toString(),
-                cropHeight.toString()
+                imageInfoItem.effectiveWidth.toString(),
+                imageInfoItem.effectiveHeight.toString(),
+                imageInfoItem.isCropped.toString(),
+                (imageInfoItem.originalWidth ?? '').toString(),
+                (imageInfoItem.originalHeight ?? '').toString(),
+                (imageInfoItem.cropArea?.x ?? '').toString(),
+                (imageInfoItem.cropArea?.y ?? '').toString(),
+                (imageInfoItem.cropArea?.width ?? '').toString(),
+                (imageInfoItem.cropArea?.height ?? '').toString()
             ];
 
-            // Add stats for each defined class
+            // Add stats for each defined class for this image
             sortedClasses.forEach(ac => {
                 const stats = dataByImageAndClass[imageName]?.[ac.id];
                 if (stats) {
@@ -479,7 +339,7 @@ export function ExportControls({
                     rowData.push(stats.totalPixelArea.toFixed(2));
                     rowData.push(stats.percentageCoverage.toFixed(2));
                 } else {
-                    // Class exists but has no annotations in this image
+                    // Class exists but has no annotations in this image (or image had no annotations)
                     rowData.push("0"); // Count
                     rowData.push("0.00"); // Area
                     rowData.push("0.00"); // Coverage
@@ -505,14 +365,15 @@ export function ExportControls({
     return ""; // Should not happen
   };
 
-  const handleExportCoverage = (format: CoverageExportFormat) => {
-    const coverageData = prepareCoverageData();
-    if (!coverageData) {
-      return; // Toasts handled within prepareCoverageData
+  // Renamed function to handle the combined export
+  const handleExportData = (format: CoverageExportFormat) => {
+    const exportData = prepareExportData();
+    if (!exportData) {
+      return; // Toasts handled within prepareExportData
     }
 
-    const fileContent = generateCoverageFileContent(coverageData, format);
-    const baseFilename = "batch_coverage";
+    const fileContent = generateExportFileContent(exportData, format);
+    const baseFilename = "fieldquad_batch_data"; // More descriptive base name
     let filename = `${baseFilename}`;
     let mimeType = '';
 
@@ -533,95 +394,57 @@ export function ExportControls({
     downloadFile(fileContent, filename, mimeType);
   };
 
-  const hasAnnotationsInBatch = batchImages.some(img => img.annotations.length > 0);
-  const commonAnnotationExportDisabled = batchImages.length === 0 || !hasAnnotationsInBatch;
-  // Coverage export requires images, classes, and effective dimensions for all images
-  const coverageExportDisabled = batchImages.length === 0 || annotationClasses.length === 0 || !batchImages.every(img => getEffectiveDimensions(img));
+  // Determine if export should be disabled
+  const exportDisabled = batchImages.length === 0 || annotationClasses.length === 0 || !batchImages.every(img => getEffectiveDimensions(img));
 
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center"><DownloadCloud className="mr-2 h-5 w-5 text-primary" /> Export Batch Data</CardTitle>
+        <CardTitle className="flex items-center"><DownloadCloud className="mr-2 h-5 w-5 text-primary" /> Export Data</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div>
-          <h4 className="text-sm font-medium mb-2">Annotation Coordinates</h4>
-           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                className="w-full"
-                variant="outline"
-                disabled={commonAnnotationExportDisabled}
-              >
-                Export Coordinates As...
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-56">
-                <DropdownMenuLabel>TXT Format (Per Image)</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => handleExportCoordinates('txt_original')} disabled={commonAnnotationExportDisabled}>
-                    Original Pixel Coordinates (.txt)
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleExportCoordinates('txt_normalized')} disabled={commonAnnotationExportDisabled}>
-                    Normalized Coordinates (.txt)
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel>JSON Format (Per Image)</DropdownMenuLabel>
-                 <DropdownMenuItem onClick={() => handleExportCoordinates('json_original')} disabled={commonAnnotationExportDisabled}>
-                    Original Pixel Coordinates (.json)
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleExportCoordinates('json_normalized')} disabled={commonAnnotationExportDisabled}>
-                    Normalized Coordinates (.json)
-                </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-           {commonAnnotationExportDisabled && batchImages.length > 0 && !hasAnnotationsInBatch && (
-            <p className="text-xs text-muted-foreground text-center pt-1">
-              Add annotations to enable coordinate export.
-            </p>
-           )}
-        </div>
-        <Separator />
-        <div>
-          <h4 className="text-sm font-medium mb-2">Coverage Statistics</h4>
+         <p className="text-xs text-muted-foreground">
+             Export image dimensions and class coverage statistics for the batch.
+         </p>
+         <div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 className="w-full"
                 variant="outline"
-                disabled={coverageExportDisabled}
+                disabled={exportDisabled}
               >
-                Export Coverage As...
+                Export Dimensions & Coverage...
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
-              <DropdownMenuLabel>Format (Batch Summary)</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => handleExportCoverage('csv')} disabled={coverageExportDisabled}>
+              <DropdownMenuLabel>Export Format</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => handleExportData('csv')} disabled={exportDisabled}>
                 Spreadsheet (.csv)
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExportCoverage('txt')} disabled={coverageExportDisabled}>
+              <DropdownMenuItem onClick={() => handleExportData('txt')} disabled={exportDisabled}>
                 Text File (.txt)
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExportCoverage('json')} disabled={coverageExportDisabled}>
+              <DropdownMenuItem onClick={() => handleExportData('json')} disabled={exportDisabled}>
                 JSON File (.json)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {coverageExportDisabled && batchImages.length > 0 && (
+          {exportDisabled && batchImages.length > 0 && (
            <p className="text-xs text-muted-foreground text-center pt-1">
-             {annotationClasses.length === 0 ? "Add classes to enable coverage export." :
+             {annotationClasses.length === 0 ? "Add classes to enable export." :
               !batchImages.every(img => getEffectiveDimensions(img)) ? "Image data incomplete (dimensions/crop)." :
               "Requires images, classes & dimensions."
              }
            </p>
           )}
-        </div>
-
          {batchImages.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center pt-2">
-                Upload images to enable export.
-            </p>
-         )}
+             <p className="text-xs text-muted-foreground text-center pt-2">
+                 Upload images and define classes to enable export.
+             </p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

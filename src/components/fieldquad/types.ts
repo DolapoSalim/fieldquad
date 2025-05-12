@@ -23,8 +23,8 @@ export interface Annotation {
 }
 
 export interface ImageDimensions {
-  width: number; // display width
-  height: number; // display height
+  width: number; // display width - might be less relevant now with zoom/pan
+  height: number; // display height - might be less relevant now with zoom/pan
   naturalWidth: number; // original image width
   naturalHeight: number; // original image height
 }
@@ -35,13 +35,15 @@ export interface ShapeData {
   points: Point[];
 }
 
-export type ExportFormat = 'original' | 'normalized';
+// Removed ExportFormat type as it's no longer used for coordinate export options
+// export type ExportFormat = 'original' | 'normalized';
 
-export type CoordinateExportType =
-  | 'txt_original'
-  | 'txt_normalized'
-  | 'json_original'
-  | 'json_normalized';
+// Removed CoordinateExportType as coordinate export is removed
+// export type CoordinateExportType =
+//   | 'txt_original'
+//   | 'txt_normalized'
+//   | 'json_original'
+//   | 'json_normalized';
 
 export type CoverageExportFormat = 'json' | 'txt' | 'csv'; // Changed 'xlsx' to 'csv' for simplicity
 
@@ -62,3 +64,4 @@ export interface CropArea {
   width: number;
   height: number;
 }
+
