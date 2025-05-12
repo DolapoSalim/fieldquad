@@ -1,4 +1,3 @@
-
 "use client";
 
 import type React from 'react';
@@ -6,7 +5,7 @@ import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { UploadCloud, X } from 'lucide-react';
+import { UploadCloud, X, LayoutGrid, List } from 'lucide-react';
 import type { ImageDimensions, ImageState } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -16,19 +15,22 @@ import { cn } from '@/lib/utils';
 interface ImageUploaderProps {
   onBatchUpload: (imageStates: ImageState[]) => void;
   onImageSelect: (id: string) => void;
-  onImageRemove: (id: string) => void;
+  onImageRemove: (id: string) => void; // Added prop for removing images
   batchImages: ImageState[];
   activeImageId: string | null;
 }
 
-export function ImageUploader({ 
+type ViewMode = 'list' | 'grid';
+
+export function ImageUploader({
   onBatchUpload,
   onImageSelect,
-  onImageRemove,
+  onImageRemove, // Receive the remove handler
   batchImages = [],
-  activeImageId 
+  activeImageId
 }: ImageUploaderProps): JSX.Element {
   const { toast } = useToast();
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -38,6 +40,12 @@ export function ImageUploader({
     const processingPromises: Promise<void>[] = [];
 
     for (const file of Array.from(files)) {
+      // Check if an image with the same name already exists in the batch
+      if (batchImages.some(img => img.file.name === file.name)) {
+        toast({ title: "Duplicate Image", description: `Image "${file.name}" is already in the batch.`, variant: "default" });
+        continue; // Skip this file
+      }
+      
       if (!file.type.startsWith('image/')) {
         toast({ title: "Invalid File", description: `${file.name} is not an image.`, variant: "destructive" });
         continue;
@@ -54,8 +62,8 @@ export function ImageUploader({
               file: file,
               src: dataUrl,
               dimensions: {
-                width: img.width,
-                height: img.height,
+                width: img.width, // Use displayed width if needed, often same as natural
+                height: img.height, // Use displayed height if needed, often same as natural
                 naturalWidth: img.naturalWidth,
                 naturalHeight: img.naturalHeight,
               },
@@ -84,55 +92,105 @@ export function ImageUploader({
       toast({ title: "Image Load Error", description: "Could not load one or more images.", variant: "destructive" });
     }
 
-    // Reset the input value to allow uploading the same file(s) again
+    // Reset the input value to allow uploading the same file(s) again (if needed after removal)
      event.target.value = '';
   };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center"><UploadCloud className="mr-2 h-5 w-5 text-primary" /> Upload Image(s)</CardTitle>
+        <CardTitle className="flex items-center justify-between">
+          <div className="flex items-center">
+            <UploadCloud className="mr-2 h-5 w-5 text-primary" /> Upload Image(s)
+          </div>
+           {batchImages.length > 0 && (
+            <div className="flex items-center space-x-1">
+                <Button
+                    variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setViewMode('list')}
+                    aria-label="List view"
+                >
+                    <List size={16} />
+                </Button>
+                <Button
+                    variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setViewMode('grid')}
+                    aria-label="Grid view"
+                >
+                    <LayoutGrid size={16} />
+                </Button>
+            </div>
+           )}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-2">
           <Label htmlFor="image-upload">Select Quadrant Images</Label>
-          <Input 
-            id="image-upload" 
-            type="file" 
-            accept="image/*" 
+          <Input
+            id="image-upload"
+            type="file"
+            accept="image/*"
             multiple // Allow multiple file selection
-            onChange={handleFileChange} 
-            className="text-sm" 
+            onChange={handleFileChange}
+            className="text-sm"
           />
         </div>
-        
+
         {batchImages.length > 0 && (
           <div className="mt-4 space-y-2">
             <Label>Batch Images ({batchImages.length})</Label>
-            <ScrollArea className="h-48 w-full rounded-md border p-2 custom-scrollbar">
-              <div className="space-y-2">
+            <ScrollArea className="h-48 w-full rounded-md border p-1 custom-scrollbar">
+              <div
+                className={cn(
+                  "p-1",
+                  viewMode === 'grid' ? 'grid grid-cols-3 gap-2' : 'space-y-2'
+                )}
+              >
                 {batchImages.map((imgState) => (
-                  <div 
+                  <div
                     key={imgState.id}
                     className={cn(
-                      "flex items-center justify-between p-2 rounded-md border cursor-pointer transition-colors",
-                      activeImageId === imgState.id ? "bg-accent/20 border-primary" : "bg-background hover:bg-muted/50"
+                      "relative group border rounded-md cursor-pointer transition-colors overflow-hidden",
+                      activeImageId === imgState.id ? "bg-accent/20 border-primary ring-1 ring-primary" : "bg-background hover:bg-muted/50",
+                      viewMode === 'list' ? "flex items-center justify-between p-2" : "aspect-square flex items-center justify-center"
                     )}
                     onClick={() => onImageSelect(imgState.id)}
                   >
-                    <div className="flex items-center space-x-2 overflow-hidden">
-                      <img 
-                        src={imgState.src} 
-                        alt={imgState.file.name} 
-                        className="w-10 h-10 object-cover rounded-sm shrink-0" 
-                        data-ai-hint="batch thumbnail" 
-                      />
-                      <span className="text-sm truncate flex-1 min-w-0">{imgState.file.name}</span>
-                    </div>
-                     <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
+                    {/* Image Preview */}
+                    <img
+                      src={imgState.src}
+                      alt={imgState.file.name}
+                      className={cn(
+                          "object-cover shrink-0",
+                          viewMode === 'list' ? "w-10 h-10 rounded-sm" : "w-full h-full"
+                      )}
+                      data-ai-hint="batch thumbnail"
+                    />
+
+                     {/* Filename (only for list view or on hover for grid view) */}
+                    {viewMode === 'list' && (
+                        <span className="text-sm truncate flex-1 min-w-0 ml-2">{imgState.file.name}</span>
+                    )}
+                     {viewMode === 'grid' && (
+                        <div className="absolute inset-x-0 bottom-0 bg-black/50 p-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                           <p className="text-xs text-white truncate">{imgState.file.name}</p>
+                        </div>
+                     )}
+
+
+                    {/* Remove Button */}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                          "absolute z-10 h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-full",
+                          viewMode === 'list' ? "right-1 top-1" : "right-1 top-1 bg-background/60 hover:bg-destructive/20",
+                          "opacity-50 group-hover:opacity-100 transition-opacity" // Show on hover
+                      )}
                       onClick={(e) => {
                         e.stopPropagation(); // Prevent selection when clicking remove
                         onImageRemove(imgState.id);

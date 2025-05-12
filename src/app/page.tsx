@@ -1,4 +1,3 @@
-
 "use client";
 
 import type React from 'react';
@@ -17,7 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 // Helper to generate distinct colors
 const PREDEFINED_COLORS = [
-  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#2AB7CA', 
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#2AB7CA',
   '#F0B67F', '#FE5F55', '#D65DB1', '#845EC2', '#008F7A',
   '#FFC154', '#EC6B56', '#FF7B54', '#A7226E', '#F26B38',
   '#2E0219', '#644536', '#B2675E', '#D4A276', '#F4DBAA'
@@ -31,7 +30,7 @@ export default function FieldQuadPage(): JSX.Element {
 
   // Annotation Classes (global for the session)
   const [annotationClasses, setAnnotationClasses] = useState<AnnotationClass[]>([]);
-  
+
   // Current Tool and Selection State (applies to active image)
   const [currentTool, setCurrentTool] = useState<AnnotationTool>('bbox');
   const [selectedClassIdForToolbar, setSelectedClassIdForToolbar] = useState<string | null>(null); // Class highlighted in toolbar
@@ -47,10 +46,21 @@ export default function FieldQuadPage(): JSX.Element {
   // --- Batch Image Handling ---
 
   const handleBatchUpload = (newImageStates: ImageState[]) => {
-    setBatchImages(prev => [...prev, ...newImageStates]);
-    // Activate the first image of the new batch if no image is active yet
-    if (!activeImageId && newImageStates.length > 0) {
-      setActiveImageId(newImageStates[0].id);
+    const uniqueNewImages = newImageStates.filter(newState =>
+       !batchImages.some(existingState => existingState.file.name === newState.file.name)
+    );
+
+    if(uniqueNewImages.length !== newImageStates.length){
+         toast({ title: "Duplicates Skipped", description: "Some uploaded images were already in the batch and were skipped."});
+    }
+
+
+    if (uniqueNewImages.length > 0) {
+        setBatchImages(prev => [...prev, ...uniqueNewImages]);
+        // Activate the first image of the new batch if no image is active yet
+        if (!activeImageId && uniqueNewImages.length > 0) {
+            setActiveImageId(uniqueNewImages[0].id);
+        }
     }
   };
 
@@ -62,19 +72,41 @@ export default function FieldQuadPage(): JSX.Element {
       setPendingShapeData(null); // Clear any pending shape
       setIsClassAssignmentDialogOpen(false); // Close dialogs
       setIsEditClassDialogOpen(false);
-      toast({ title: "Image Switched", description: `Now annotating: ${batchImages.find(img => img.id === id)?.file.name}` });
+      const imageName = batchImages.find(img => img.id === id)?.file.name;
+      toast({ title: "Image Switched", description: `Now annotating: ${imageName || 'selected image'}` });
     }
   };
 
-  const handleRemoveImageFromBatch = (idToRemove: string) => {
-    setBatchImages(prev => prev.filter(img => img.id !== idToRemove));
-    if (activeImageId === idToRemove) {
-      // If the removed image was active, select the next available one, or null if none left
-      const remainingImages = batchImages.filter(img => img.id !== idToRemove);
-      setActiveImageId(remainingImages.length > 0 ? remainingImages[0].id : null);
-    }
-     toast({ title: "Image Removed", description: `Image removed from batch.` });
-  };
+  const handleRemoveImageFromBatch = useCallback((idToRemove: string) => {
+    const imageToRemove = batchImages.find(img => img.id === idToRemove);
+    if (!imageToRemove) return;
+
+    setBatchImages(prev => {
+       const updatedBatch = prev.filter(img => img.id !== idToRemove);
+       // Logic to handle active image change after removal
+       if (activeImageId === idToRemove) {
+            if (updatedBatch.length > 0) {
+                // Find the index of the removed image
+                const removedIndex = prev.findIndex(img => img.id === idToRemove);
+                // Select the previous image, or the first if the removed was the first
+                const nextActiveIndex = Math.max(0, removedIndex - 1);
+                setActiveImageId(updatedBatch[nextActiveIndex]?.id ?? (updatedBatch[0]?.id || null));
+            } else {
+                 setActiveImageId(null); // No images left
+            }
+       }
+       return updatedBatch; // Return the updated batch
+    });
+
+     toast({ title: "Image Removed", description: `Removed "${imageToRemove.file.name}" from batch.` });
+     setSelectedAnnotationId(null); // Deselect annotation if active image changes or might change
+     if (activeImageId === idToRemove && batchImages.length === 1) { // Special case: removing the only image
+       setCurrentTool('bbox');
+       setPendingShapeData(null);
+       setIsClassAssignmentDialogOpen(false);
+       setIsEditClassDialogOpen(false);
+     }
+  }, [batchImages, activeImageId, toast]);
 
 
   // --- Derived State for Active Image ---
@@ -90,10 +122,10 @@ export default function FieldQuadPage(): JSX.Element {
 
   const handleAnnotationsChange = useCallback((updatedAnnotations: Annotation[]) => {
     if (!activeImageId) return;
-    setBatchImages(prev => 
-      prev.map(img => 
-        img.id === activeImageId 
-          ? { ...img, annotations: updatedAnnotations } 
+    setBatchImages(prev =>
+      prev.map(img =>
+        img.id === activeImageId
+          ? { ...img, annotations: updatedAnnotations }
           : img
       )
     );
@@ -111,7 +143,7 @@ export default function FieldQuadPage(): JSX.Element {
     }
     setPendingShapeData(shape);
     setIsClassAssignmentDialogOpen(true);
-    setSelectedAnnotationId(null); 
+    setSelectedAnnotationId(null);
   };
 
   const handleAssignClassToShape = (classId: string) => {
@@ -123,16 +155,16 @@ export default function FieldQuadPage(): JSX.Element {
       type: pendingShapeData.type,
       points: pendingShapeData.points,
     };
-    
+
     // Update annotations for the active image
-    setBatchImages(prev => 
-      prev.map(img => 
-        img.id === activeImageId 
-          ? { ...img, annotations: [...img.annotations, newAnnotation] } 
+    setBatchImages(prev =>
+      prev.map(img =>
+        img.id === activeImageId
+          ? { ...img, annotations: [...img.annotations, newAnnotation] }
           : img
       )
     );
-    
+
     const assignedClass = annotationClasses.find(ac => ac.id === classId);
     toast({
       title: "Annotation Added",
@@ -145,15 +177,15 @@ export default function FieldQuadPage(): JSX.Element {
 
   const handleDeleteSelectedAnnotation = useCallback(() => {
     if (!selectedAnnotationId || !activeImageId) return;
-    
-    setBatchImages(prev => 
-      prev.map(img => 
-        img.id === activeImageId 
-          ? { ...img, annotations: img.annotations.filter(ann => ann.id !== selectedAnnotationId) } 
+
+    setBatchImages(prev =>
+      prev.map(img =>
+        img.id === activeImageId
+          ? { ...img, annotations: img.annotations.filter(ann => ann.id !== selectedAnnotationId) }
           : img
       )
     );
-    
+
     setSelectedAnnotationId(null);
     toast({ title: "Annotation Deleted" });
   }, [selectedAnnotationId, activeImageId, toast]);
@@ -161,10 +193,10 @@ export default function FieldQuadPage(): JSX.Element {
   const handleChangeAnnotationClass = (newClassId: string) => {
     if (!selectedAnnotationId || !activeImageId) return;
 
-    setBatchImages(prev => 
-      prev.map(img => 
-        img.id === activeImageId 
-          ? { ...img, annotations: img.annotations.map(ann => ann.id === selectedAnnotationId ? { ...ann, classId: newClassId } : ann) } 
+    setBatchImages(prev =>
+      prev.map(img =>
+        img.id === activeImageId
+          ? { ...img, annotations: img.annotations.map(ann => ann.id === selectedAnnotationId ? { ...ann, classId: newClassId } : ann) }
           : img
       )
     );
@@ -183,7 +215,7 @@ export default function FieldQuadPage(): JSX.Element {
   const handleCreateClass = (name: string) => {
     const existingClass = annotationClasses.find(ac => ac.name.toLowerCase() === name.toLowerCase());
     if (existingClass) {
-      setSelectedClassIdForToolbar(existingClass.id); 
+      setSelectedClassIdForToolbar(existingClass.id);
       toast({ title: "Class Exists", description: `Class "${existingClass.name}" already exists.`});
       return;
     }
@@ -220,6 +252,10 @@ export default function FieldQuadPage(): JSX.Element {
       toast({ title: "No Annotation Selected", description: "Please select an annotation to change its class.", variant: "destructive" });
       return;
     }
+    if (annotationClasses.length === 0) {
+         toast({ title: "No Classes Available", description: "Create annotation classes first to change the assignment.", variant: "destructive" });
+         return;
+    }
     setIsEditClassDialogOpen(true);
   };
 
@@ -246,11 +282,11 @@ export default function FieldQuadPage(): JSX.Element {
     // Keyboard listener for deleting selected annotation
     const handleKeyDown = (event: KeyboardEvent) => {
       if (selectedAnnotationId && (event.key === 'Delete' || event.key === 'Backspace')) {
-        // Prevent browser back navigation on Backspace
+        // Prevent browser back navigation on Backspace, unless focused on input
         if (event.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) {
-          return; // Don't delete if focused on an input
+          return;
         }
-        event.preventDefault(); 
+        event.preventDefault();
         handleDeleteSelectedAnnotation();
       }
     };
@@ -274,14 +310,14 @@ export default function FieldQuadPage(): JSX.Element {
             {/* Maybe add user/auth info here later */}
         </div>
       </header>
-      
+
       <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8 flex flex-col lg:flex-row gap-6 md:gap-8 overflow-hidden">
         {/* Sidebar */}
         <aside className="w-full lg:w-80 xl:w-96 space-y-6 flex-shrink-0 overflow-y-auto lg:pr-1 custom-scrollbar">
-          <ImageUploader 
-            onBatchUpload={handleBatchUpload} 
+          <ImageUploader
+            onBatchUpload={handleBatchUpload}
             onImageSelect={handleSelectImageFromBatch}
-            onImageRemove={handleRemoveImageFromBatch}
+            onImageRemove={handleRemoveImageFromBatch} // Pass the handler
             batchImages={batchImages}
             activeImageId={activeImageId}
           />
@@ -290,8 +326,8 @@ export default function FieldQuadPage(): JSX.Element {
             onToolChange={setCurrentTool}
             annotationClasses={annotationClasses}
             onClassCreate={handleCreateClass}
-            selectedClassIdForToolbar={selectedClassIdForToolbar} 
-            onClassSelectForToolbar={handleSelectClassForToolbar} 
+            selectedClassIdForToolbar={selectedClassIdForToolbar}
+            onClassSelectForToolbar={handleSelectClassForToolbar}
             selectedAnnotationId={selectedAnnotationId}
             onDeleteSelectedAnnotation={handleDeleteSelectedAnnotation}
             onOpenEditClassDialog={handleOpenEditClassDialog}
@@ -303,7 +339,7 @@ export default function FieldQuadPage(): JSX.Element {
             annotationClasses={annotationClasses}
           />
         </aside>
-        
+
         {/* Main Annotation Area */}
         <section className="flex-1 bg-card p-4 md:p-6 rounded-lg shadow-lg min-h-[300px] md:min-h-[400px] lg:min-h-0 flex flex-col overflow-hidden">
           {activeImageSrc ? (
@@ -323,8 +359,8 @@ export default function FieldQuadPage(): JSX.Element {
               <ImageOff className="w-16 h-16 text-muted-foreground/50 mb-4" />
               <p className="text-lg font-medium text-muted-foreground">No Image Selected</p>
               <p className="text-sm text-muted-foreground/80">
-                {batchImages.length > 0 
-                    ? "Select an image from the batch list to start annotating." 
+                {batchImages.length > 0
+                    ? "Select an image from the batch list to start annotating."
                     : "Upload one or more images using the panel on the left."}
               </p>
             </div>
@@ -369,9 +405,12 @@ export default function FieldQuadPage(): JSX.Element {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => {
+              // If cancelled, remove the pending shape visually (if needed, but shape isn't added yet)
+              // For now, just closing the dialog and clearing pending state is enough
               setPendingShapeData(null);
               setIsClassAssignmentDialogOpen(false);
-            }}>Cancel</Button>
+              // We might want to redraw canvas if the temporary shape was visible
+            }}>Cancel & Discard Shape</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
