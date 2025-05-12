@@ -5,6 +5,9 @@ import type React from 'react';
 import { useRef, useEffect, useState, useCallback } from 'react';
 import type { Point, Annotation, AnnotationTool, AnnotationClass, ImageDimensions, ShapeData } from './types';
 import { useToast } from "@/hooks/use-toast";
+import { Button } from '@/components/ui/button';
+import { ZoomIn, ZoomOut, Expand, Minus, Plus } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface AnnotationCanvasProps {
   imageSrc: string | null;
@@ -18,12 +21,15 @@ interface AnnotationCanvasProps {
   onSelectAnnotation: (id: string | null) => void;
 }
 
-const TEMP_DRAW_COLOR = '#008080'; 
-const TEMP_DRAW_FILL_COLOR = `${TEMP_DRAW_COLOR}33`;
-const ANNOTATION_LINE_WIDTH = 3;
-const SELECTED_ANNOTATION_LINE_WIDTH = 5;
+const TEMP_DRAW_COLOR = '#008080';
+const TEMP_DRAW_FILL_COLOR = `${TEMP_DRAW_COLOR}55`; // Increased opacity
+const ANNOTATION_LINE_WIDTH = 2; // Slightly thinner default
+const SELECTED_ANNOTATION_LINE_WIDTH = 4; // Thicker selection
 const SELECTED_ANNOTATION_COLOR = '#FF8C00'; // DarkOrange for selection highlight
-const HANDLE_SIZE = 8; // For resize/move handles (visual only for now)
+const HANDLE_SIZE = 8; // For resize/move handles
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 10;
+const ZOOM_SENSITIVITY = 0.001;
 
 export function AnnotationCanvas({
   imageSrc,
@@ -37,12 +43,22 @@ export function AnnotationCanvas({
   onSelectAnnotation,
 }: AnnotationCanvasProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isDrawing, setIsDrawing] = useState(false); // For new shapes
-  const [startPoint, setStartPoint] = useState<Point | null>(null);
-  const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null); // Ref for the container div
 
+  // Drawing state
+  const [isDrawing, setIsDrawing] = useState(false); // For new shapes
+  const [startPoint, setStartPoint] = useState<Point | null>(null); // In image coordinates
+  const [currentPoints, setCurrentPoints] = useState<Point[]>([]); // In image coordinates
+
+  // Dragging state
   const [isDraggingAnnotation, setIsDraggingAnnotation] = useState(false);
-  const [dragStartOffset, setDragStartOffset] = useState<Point | null>(null); // Offset from annotation origin to mouse click
+  const [dragStartOffset, setDragStartOffset] = useState<Point | null>(null); // Offset in image coordinates
+
+  // Zoom/Pan state
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState<Point>({ x: 0, y: 0 }); // Canvas pixel offset
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState<Point | null>(null); // Screen coordinates for panning delta
 
   const { toast } = useToast();
 
@@ -51,97 +67,198 @@ export function AnnotationCanvas({
     return canvas?.getContext('2d') || null;
   }, []);
 
-  const getMousePos = useCallback((event: React.MouseEvent<HTMLCanvasElement> | MouseEvent): Point => {
+  // Converts screen coordinates (relative to canvas element) to image coordinates
+  const screenToImageCoords = useCallback((screenX: number, screenY: number): Point => {
+    return {
+      x: (screenX - offset.x) / zoom,
+      y: (screenY - offset.y) / zoom,
+    };
+  }, [offset.x, offset.y, zoom]);
+
+  // Converts image coordinates to screen coordinates (relative to canvas element)
+  const imageToScreenCoords = useCallback((imageX: number, imageY: number): Point => {
+    return {
+      x: imageX * zoom + offset.x,
+      y: imageY * zoom + offset.y,
+    };
+  }, [offset.x, offset.y, zoom]);
+
+  // Gets mouse position relative to the canvas element (screen coordinates)
+  const getCanvasMousePos = useCallback((event: React.MouseEvent<HTMLCanvasElement> | MouseEvent): Point => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
     return {
-      x: (event.clientX - rect.left) * scaleX,
-      y: (event.clientY - rect.top) * scaleY,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     };
   }, []);
+
+  // Gets mouse position in image coordinates
+  const getImageMousePos = useCallback((event: React.MouseEvent<HTMLCanvasElement> | MouseEvent): Point => {
+    const { x: screenX, y: screenY } = getCanvasMousePos(event);
+    return screenToImageCoords(screenX, screenY);
+  }, [getCanvasMousePos, screenToImageCoords]);
+
 
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = getCanvasContext();
     if (!canvas || !ctx || !imageSrc || !imageDimensions) return;
 
+    // Ensure canvas display size matches container, adjust internal size if needed
+    const container = containerRef.current;
+     if (!container) return;
+    const { width: displayWidth, height: displayHeight } = container.getBoundingClientRect();
+     if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+       canvas.width = displayWidth;
+       canvas.height = displayHeight;
+     }
+
+
+    // Clear canvas (only the visible part)
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+
     const img = new Image();
     img.src = imageSrc;
-    img.onload = () => {
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      drawAnnotations(ctx);
-      if (isDrawing && currentPoints.length > 0 && currentTool !== 'select') {
-        drawTemporaryShape(ctx, currentPoints, startPoint);
-      }
-    };
-    img.onerror = () => {
-       // Image might not be loaded yet, or path is invalid. Silently fail or toast.
-       // For this redraw, if image isn't ready, it might just draw annotations on blank.
-    }
-    // If image is already loaded and cached by browser, onload might not fire if src is set repeatedly.
-    // A better approach is to load image once and keep the Image object.
-    // For now, if img.complete, draw immediately.
-    if (img.complete && img.naturalHeight !== 0) {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        drawAnnotations(ctx);
+
+    const drawContent = () => {
+        ctx.save(); // Save context before applying transformations
+
+        // Apply pan and zoom transformations
+        ctx.translate(offset.x, offset.y);
+        ctx.scale(zoom, zoom);
+
+        // Draw the image at its origin in the transformed space
+        ctx.drawImage(img, 0, 0, imageDimensions.naturalWidth, imageDimensions.naturalHeight);
+
+        // Draw existing annotations (using image coordinates)
+        drawAnnotations(ctx, annotations, annotationClasses, selectedAnnotationId, zoom);
+
+         // Draw temporary shape if drawing (using image coordinates)
         if (isDrawing && currentPoints.length > 0 && currentTool !== 'select' && startPoint) {
-            // This part is tricky, as currentPoints for drawing is different from actual annotations
-            // The temporary shape drawing logic is mostly within handleMouseMove for drawing tools
+            drawTemporaryShape(ctx, currentPoints, startPoint, currentTool, zoom);
         }
+
+        ctx.restore(); // Restore context to remove transformations
+    };
+
+    if (img.complete && img.naturalHeight !== 0) {
+        drawContent();
+    } else {
+        img.onload = () => {
+            drawContent();
+        };
+        img.onerror = () => {
+            // Handle image load error - maybe draw placeholder?
+            console.error("Failed to load image for canvas drawing.");
+            ctx.fillStyle = 'grey';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.fillText("Error loading image", canvas.width/2, canvas.height/2);
+
+        };
     }
 
+  }, [
+    imageSrc,
+    imageDimensions,
+    annotations,
+    annotationClasses,
+    selectedAnnotationId,
+    getCanvasContext,
+    isDrawing,
+    currentPoints,
+    startPoint,
+    currentTool,
+    zoom,
+    offset,
+  ]);
 
-  }, [imageSrc, imageDimensions, annotations, annotationClasses, selectedAnnotationId, getCanvasContext, isDrawing, currentPoints, startPoint, currentTool]);
 
-
+  // Effect to redraw canvas whenever relevant state changes
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !imageDimensions) return;
-    canvas.width = imageDimensions.naturalWidth;
-    canvas.height = imageDimensions.naturalHeight;
     redrawCanvas();
-  }, [imageSrc, imageDimensions, annotations, selectedAnnotationId, redrawCanvas]);
+  }, [redrawCanvas]); // Dependencies are now managed within redrawCanvas
+
+
+  // Recenter and fit image on initial load or image change
+  useEffect(() => {
+      const canvas = canvasRef.current;
+      const container = containerRef.current;
+      if (!canvas || !container || !imageDimensions) return;
+
+      const { width: displayWidth, height: displayHeight } = container.getBoundingClientRect();
+      const { naturalWidth, naturalHeight } = imageDimensions;
+
+      const scaleX = displayWidth / naturalWidth;
+      const scaleY = displayHeight / naturalHeight;
+      const initialZoom = Math.min(scaleX, scaleY) * 0.95; // Fit within 95% of view
+
+      const initialOffsetX = (displayWidth - naturalWidth * initialZoom) / 2;
+      const initialOffsetY = (displayHeight - naturalHeight * initialZoom) / 2;
+
+      setZoom(initialZoom);
+      setOffset({ x: initialOffsetX, y: initialOffsetY });
+
+      // Force redraw after setting initial zoom/offset
+      requestAnimationFrame(() => redrawCanvas());
+
+  }, [imageSrc, imageDimensions]); // Rerun when image changes
 
 
   const isPointInsideAnnotationPath = (ctx: CanvasRenderingContext2D, point: Point, annotation: Annotation): boolean => {
-    ctx.beginPath();
+     // Use a separate path for hit testing, don't affect main context state
+    const path = new Path2D();
     if (annotation.type === 'bbox' && annotation.points.length === 2) {
       const [p1, p2] = annotation.points;
       const minX = Math.min(p1.x, p2.x);
       const minY = Math.min(p1.y, p2.y);
       const width = Math.abs(p1.x - p2.x);
       const height = Math.abs(p1.y - p2.y);
-      ctx.rect(minX, minY, width, height);
+      path.rect(minX, minY, width, height);
     } else if ((annotation.type === 'polygon' || annotation.type === 'freehand') && annotation.points.length > 1) {
-      ctx.moveTo(annotation.points[0].x, annotation.points[0].y);
+      path.moveTo(annotation.points[0].x, annotation.points[0].y);
       for (let i = 1; i < annotation.points.length; i++) {
-        ctx.lineTo(annotation.points[i].x, annotation.points[i].y);
+        path.lineTo(annotation.points[i].x, annotation.points[i].y);
       }
       if (annotation.type === 'polygon' && annotation.points.length > 2) {
-        ctx.closePath();
+        path.closePath();
       }
     } else {
       return false;
     }
-    return ctx.isPointInPath(point.x, point.y);
+    // Check point against the path in the non-transformed context
+    // NOTE: Need to pass the point in IMAGE coordinates here
+    return ctx.isPointInPath(path, point.x, point.y);
   };
 
-  const drawAnnotations = (ctx: CanvasRenderingContext2D) => {
-    annotations.forEach(ann => {
-      const annClass = annotationClasses.find(ac => ac.id === ann.classId);
-      const isSelected = ann.id === selectedAnnotationId;
-      
+  const drawAnnotations = (
+    ctx: CanvasRenderingContext2D,
+    anns: Annotation[],
+    classes: AnnotationClass[],
+    selectedId: string | null,
+    currentZoom: number
+    ) => {
+
+    const baseLineWidth = ANNOTATION_LINE_WIDTH / currentZoom;
+    const selectedLineWidth = SELECTED_ANNOTATION_LINE_WIDTH / currentZoom;
+    const handleSize = HANDLE_SIZE / currentZoom;
+    const fontSize = 12 / currentZoom;
+
+    anns.forEach(ann => {
+      const annClass = classes.find(ac => ac.id === ann.classId);
+      const isSelected = ann.id === selectedId;
+
       ctx.strokeStyle = isSelected ? SELECTED_ANNOTATION_COLOR : (annClass?.color || TEMP_DRAW_COLOR);
       ctx.fillStyle = annClass ? `${annClass.color}55` : `${TEMP_DRAW_FILL_COLOR}55`;
       if (isSelected) {
         ctx.fillStyle = `${SELECTED_ANNOTATION_COLOR}55`; // More prominent fill for selected
       }
-      ctx.lineWidth = isSelected ? SELECTED_ANNOTATION_LINE_WIDTH : ANNOTATION_LINE_WIDTH;
-      
+      ctx.lineWidth = isSelected ? selectedLineWidth : baseLineWidth;
+
       ctx.beginPath();
 
       if (ann.type === 'bbox' && ann.points.length === 2) {
@@ -154,9 +271,9 @@ export function AnnotationCanvas({
         ctx.stroke();
         ctx.fill();
         if (annClass) {
-            ctx.fillStyle = isSelected? SELECTED_ANNOTATION_COLOR : annClass.color;
-            ctx.font = `bold ${isSelected ? 14 : 12}px Arial`; 
-            ctx.fillText(annClass.name, minX + 5, minY + (isSelected ? 16 : 14));
+            ctx.fillStyle = isSelected ? SELECTED_ANNOTATION_COLOR : annClass.color;
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.fillText(annClass.name, minX + (5 / currentZoom), minY + (fontSize * 1.2)); // Adjust text position based on zoom
         }
       } else if ((ann.type === 'polygon' || ann.type === 'freehand') && ann.points.length > 1) {
         ctx.moveTo(ann.points[0].x, ann.points[0].y);
@@ -165,64 +282,96 @@ export function AnnotationCanvas({
         }
         if (ann.type === 'polygon' && ann.points.length > 2) ctx.closePath();
         ctx.stroke();
-        if (ann.points.length > 2 || (ann.type === 'polygon' && ann.points.length > 2)) ctx.fill();
-        
+        // Fill only closed polygons or freehand with enough points to resemble a shape
+        if (ann.type === 'polygon' && ann.points.length > 2) ctx.fill();
+        else if (ann.type === 'freehand' && ann.points.length > 2) ctx.fill();
+
         if (annClass && ann.points.length > 0) {
-            ctx.fillStyle = isSelected? SELECTED_ANNOTATION_COLOR : annClass.color;
-            ctx.font = `bold ${isSelected ? 14 : 12}px Arial`; 
-            ctx.fillText(annClass.name, ann.points[0].x + 5, ann.points[0].y - (isSelected ? 7 : 5));
+            ctx.fillStyle = isSelected ? SELECTED_ANNOTATION_COLOR : annClass.color;
+            ctx.font = `bold ${fontSize}px Arial`;
+            const textX = ann.points[0].x + (5 / currentZoom);
+            const textY = ann.points[0].y - (5 / currentZoom);
+            ctx.fillText(annClass.name, textX, textY);
         }
       }
 
-      // Draw handles if selected (visual only for now for polygons/freehand, bbox handles could be for resize later)
+      // Draw handles if selected
       if (isSelected) {
         ctx.fillStyle = SELECTED_ANNOTATION_COLOR;
-        ann.points.forEach(p => {
-          ctx.fillRect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        const pointsToDrawHandles = ann.type === 'bbox' && ann.points.length === 2
+          ? [ann.points[0], ann.points[1], { x: ann.points[0].x, y: ann.points[1].y }, { x: ann.points[1].x, y: ann.points[0].y }]
+          : ann.points;
+
+        pointsToDrawHandles.forEach(p => {
+          ctx.fillRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
         });
-        if (ann.type === 'bbox' && ann.points.length === 2) {
-            const [p1, p2] = ann.points;
-            const midX = (p1.x + p2.x) / 2;
-            const midY = (p1.y + p2.y) / 2;
-            const pointsForHandles = [p1, p2, {x: p1.x, y:p2.y}, {x:p2.x, y:p1.y}, {x:p1.x, y:midY}, {x:p2.x, y:midY}, {x:midX, y:p1.y}, {x:midX, y:p2.y}];
-            pointsForHandles.forEach(p => {
-                 ctx.fillRect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-            });
-        }
       }
     });
   };
 
-  const drawTemporaryShape = (ctx: CanvasRenderingContext2D, points: Point[], initialStartPoint: Point | null) => {
-    if (!initialStartPoint) return;
+ const drawTemporaryShape = (
+    ctx: CanvasRenderingContext2D,
+    points: Point[], // Image coordinates
+    initialStartPoint: Point | null, // Image coordinates
+    tool: AnnotationTool,
+    currentZoom: number
+    ) => {
+    if (!initialStartPoint || points.length === 0) return;
+
     ctx.strokeStyle = TEMP_DRAW_COLOR;
     ctx.fillStyle = TEMP_DRAW_FILL_COLOR;
-    ctx.lineWidth = ANNOTATION_LINE_WIDTH;
+    ctx.lineWidth = ANNOTATION_LINE_WIDTH / currentZoom; // Adjust line width based on zoom
     ctx.beginPath();
 
-    if (currentTool === 'bbox') {
-      if (points.length < 1) return; // Need current mouse pos as second point
-      const currentPos = points[points.length-1];
-      const minX = Math.min(initialStartPoint.x, currentPos.x);
-      const minY = Math.min(initialStartPoint.y, currentPos.y);
-      const width = Math.abs(initialStartPoint.x - currentPos.x);
-      const height = Math.abs(initialStartPoint.y - currentPos.y);
-      ctx.rect(minX, minY, width, height);
-      ctx.stroke();
-      ctx.fill();
-    } else if (currentTool === 'freehand' && points.length > 0) {
-        ctx.moveTo(points[0].x, points[0].y);
-        points.forEach(p => ctx.lineTo(p.x, p.y));
+    if (tool === 'bbox') {
+        const currentPos = points[points.length - 1]; // Use the last point as current mouse pos
+        const minX = Math.min(initialStartPoint.x, currentPos.x);
+        const minY = Math.min(initialStartPoint.y, currentPos.y);
+        const width = Math.abs(initialStartPoint.x - currentPos.x);
+        const height = Math.abs(initialStartPoint.y - currentPos.y);
+        ctx.rect(minX, minY, width, height);
         ctx.stroke();
-    } else if (currentTool === 'polygon' && points.length > 0) {
+        ctx.fill();
+    } else if (tool === 'freehand' || tool === 'polygon') {
         ctx.moveTo(points[0].x, points[0].y);
         points.forEach(p => ctx.lineTo(p.x, p.y));
-        // line to current mouse position if drawing is active
-        if (isDrawing && points.length > 0 && points[points.length-1] !== initialStartPoint) { // Check if points is not empty and last point is not the start point
-            // This logic is flawed, mousemove should handle live preview
-        }
+         // For polygon, draw line to current mouse pos during drawing (logic moved to mousemove)
         ctx.stroke();
     }
+};
+
+const handleZoom = (factor: number, centerX?: number, centerY?: number) => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+     const { width: displayWidth, height: displayHeight } = container.getBoundingClientRect();
+
+    // If center point not provided, use canvas center
+    const pivotX = centerX === undefined ? displayWidth / 2 : centerX;
+    const pivotY = centerY === undefined ? displayHeight / 2 : centerY;
+
+    // Calculate mouse position in image coordinates before zoom
+    const imagePivot = screenToImageCoords(pivotX, pivotY);
+
+    let newZoom = zoom * factor;
+    newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom)); // Clamp zoom
+
+    // Calculate new offset to keep the pivot point stationary on screen
+    const newOffsetX = pivotX - imagePivot.x * newZoom;
+    const newOffsetY = pivotY - imagePivot.y * newZoom;
+
+    setZoom(newZoom);
+    setOffset({ x: newOffsetX, y: newOffsetY });
+  };
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const delta = event.deltaY * ZOOM_SENSITIVITY * -1; // Invert direction and adjust sensitivity
+    const factor = Math.exp(delta); // Exponential zoom factor
+
+    const { x: screenX, y: screenY } = getCanvasMousePos(event);
+    handleZoom(factor, screenX, screenY);
   };
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -230,12 +379,22 @@ export function AnnotationCanvas({
     const ctx = getCanvasContext();
     if (!ctx) return;
 
-    const pos = getMousePos(event);
+    // Middle mouse button for panning
+     if (event.button === 1) { // Middle mouse button often corresponds to button 1
+         event.preventDefault(); // Prevent default scroll/pan behavior
+         setIsPanning(true);
+         setPanStart({ x: event.clientX, y: event.clientY }); // Use clientX/Y for screen delta calculation
+         canvasRef.current?.style.setProperty('cursor', 'grabbing');
+         return;
+     }
+
+    const pos = getImageMousePos(event); // Position in image coordinates
 
     if (currentTool === 'select') {
       let clickedAnnotation: Annotation | null = null;
       // Iterate in reverse to select top-most annotation
       for (let i = annotations.length - 1; i >= 0; i--) {
+        // Use the raw context for isPointInPath as it doesn't use transformations
         if (isPointInsideAnnotationPath(ctx, pos, annotations[i])) {
           clickedAnnotation = annotations[i];
           break;
@@ -245,7 +404,7 @@ export function AnnotationCanvas({
       if (clickedAnnotation) {
         onSelectAnnotation(clickedAnnotation.id);
         setIsDraggingAnnotation(true);
-        // Calculate offset from the first point of the annotation to the mouse click
+        // Calculate offset from the first point of the annotation (image coords) to the mouse click (image coords)
         const offsetX = pos.x - clickedAnnotation.points[0].x;
         const offsetY = pos.y - clickedAnnotation.points[0].y;
         setDragStartOffset({ x: offsetX, y: offsetY });
@@ -261,10 +420,10 @@ export function AnnotationCanvas({
     } else { // Drawing tools
       onSelectAnnotation(null); // Deselect if drawing
       setIsDrawing(true);
-      setStartPoint(pos);
+      setStartPoint(pos); // Store start point in image coordinates
       if (currentTool === 'polygon') {
           setCurrentPoints(prev => [...prev, pos]);
-      } else if (currentTool === 'freehand' || currentTool === 'bbox') { // Bbox starts with startPoint, adds current mouse on move
+      } else if (currentTool === 'freehand' || currentTool === 'bbox') {
           setCurrentPoints([pos]);
       }
     }
@@ -276,75 +435,75 @@ export function AnnotationCanvas({
     const ctx = getCanvasContext();
     if (!canvas || !ctx) return;
 
-    const pos = getMousePos(event);
+     // Handle Panning
+    if (isPanning && panStart) {
+        const dx = event.clientX - panStart.x;
+        const dy = event.clientY - panStart.y;
+        setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+        setPanStart({ x: event.clientX, y: event.clientY }); // Update pan start for next delta
+        redrawCanvas(); // Redraw immediately during pan
+        return; // Don't do other actions while panning
+    }
+
+
+    const pos = getImageMousePos(event); // Position in image coordinates
 
     if (isDraggingAnnotation && selectedAnnotationId && dragStartOffset) {
       const draggedAnnotation = annotations.find(ann => ann.id === selectedAnnotationId);
       if (!draggedAnnotation) return;
 
-      const newPoints = draggedAnnotation.points.map((p, index) => {
-          if (index === 0) { // Drag based on the offset from the first point
-            return {
-                x: pos.x - dragStartOffset.x,
-                y: pos.y - dragStartOffset.y
-            };
-          }
-          // For other points, maintain relative position to the first point
-          const relativeX = p.x - draggedAnnotation.points[0].x;
-          const relativeY = p.y - draggedAnnotation.points[0].y;
-          return {
-            x: (pos.x - dragStartOffset.x) + relativeX,
-            y: (pos.y - dragStartOffset.y) + relativeY
-          };
-      });
-      
-      const updatedAnnotations = annotations.map(ann => 
+      // Calculate the new position of the first point based on the drag offset
+      const newFirstPointX = pos.x - dragStartOffset.x;
+      const newFirstPointY = pos.y - dragStartOffset.y;
+
+      // Calculate the delta shift from the original first point
+      const deltaX = newFirstPointX - draggedAnnotation.points[0].x;
+      const deltaY = newFirstPointY - draggedAnnotation.points[0].y;
+
+      // Apply the delta shift to all points of the annotation
+      const newPoints = draggedAnnotation.points.map(p => ({
+          x: p.x + deltaX,
+          y: p.y + deltaY
+      }));
+
+      const updatedAnnotations = annotations.map(ann =>
         ann.id === selectedAnnotationId ? { ...ann, points: newPoints } : ann
       );
-      onAnnotationsChange(updatedAnnotations);
-      // Redraw will be triggered by useEffect on annotations change
+      onAnnotationsChange(updatedAnnotations); // State change will trigger redraw via useEffect
 
     } else if (isDrawing && startPoint && currentTool !== 'select') {
-        const img = new Image(); // TODO: Optimize image loading - don't reload on every mouse move
-        img.src = imageSrc;
-        
-        // This redraw logic in mouseMove for drawing tools should be efficient
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (img.complete && img.naturalWidth > 0) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        drawAnnotations(ctx); // Draw existing annotations first
-
-        ctx.strokeStyle = TEMP_DRAW_COLOR;
-        ctx.fillStyle = TEMP_DRAW_FILL_COLOR;
-        ctx.lineWidth = ANNOTATION_LINE_WIDTH;
-        ctx.beginPath();
-
-        if (currentTool === 'bbox') {
-            const minX = Math.min(startPoint.x, pos.x);
-            const minY = Math.min(startPoint.y, pos.y);
-            const width = Math.abs(startPoint.x - pos.x);
-            const height = Math.abs(startPoint.y - pos.y);
-            ctx.rect(minX, minY, width, height);
-            ctx.stroke();
-            ctx.fill();
-        } else if (currentTool === 'freehand') {
-            const tempCurrentPoints = [...currentPoints, pos]; 
-            if (tempCurrentPoints.length > 0) {
-                ctx.moveTo(tempCurrentPoints[0].x, tempCurrentPoints[0].y);
-                tempCurrentPoints.forEach(p => ctx.lineTo(p.x, p.y));
-                ctx.stroke();
-            }
-        } else if (currentTool === 'polygon') {
-            if (currentPoints.length > 0) {
-                ctx.moveTo(currentPoints[0].x, currentPoints[0].y);
-                currentPoints.forEach(p => ctx.lineTo(p.x, p.y));
-                ctx.lineTo(pos.x, pos.y); 
-                ctx.stroke();
-            }
-        }
+       if (currentTool === 'bbox' || currentTool === 'freehand') {
+           // For bbox and freehand, update the current point list for temporary drawing
+            setCurrentPoints(prev => {
+                 if (currentTool === 'bbox') {
+                     // Bbox only needs start and current pos for drawing
+                     return [startPoint, pos];
+                 } else { // Freehand adds points continuously
+                     return [...prev, pos];
+                 }
+             });
+       }
+       // Redraw will be triggered by state change -> redrawCanvas effect.
+       // We draw the temporary shape inside redrawCanvas now.
+       // For polygon, we only draw the line to the current mouse cursor temporarily during redraw.
+       // Need to force redraw if only mouse moves for polygon preview line
+       if(currentTool === 'polygon') {
+            redrawCanvas(); // Force redraw to show line to cursor
+       }
     }
   };
 
   const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
+
+    // End Panning
+    if (isPanning) {
+        setIsPanning(false);
+        setPanStart(null);
+        canvasRef.current?.style.setProperty('cursor', ''); // Reset cursor
+        return;
+    }
+
+
     if (isDraggingAnnotation) {
       setIsDraggingAnnotation(false);
       setDragStartOffset(null);
@@ -353,19 +512,22 @@ export function AnnotationCanvas({
     }
 
     if (!isDrawing || !startPoint || currentTool === 'select' || !imageSrc) return;
-    
-    const pos = getMousePos(event);
+
+    const pos = getImageMousePos(event); // Image coordinates
     let newShape: ShapeData | null = null;
-    let finalPoints = [...currentPoints]; // For freehand and polygon (intermediate)
+    let finalPoints = currentPoints; // Start with points accumulated during draw
 
     if (currentTool === 'bbox') {
-      if (Math.abs(startPoint.x - pos.x) > ANNOTATION_LINE_WIDTH && Math.abs(startPoint.y - pos.y) > ANNOTATION_LINE_WIDTH) {
-        newShape = { type: 'bbox', points: [startPoint, pos] };
+      // Bbox final points are just start and end
+      if (Math.abs(startPoint.x - pos.x) * zoom > ANNOTATION_LINE_WIDTH && Math.abs(startPoint.y - pos.y) * zoom > ANNOTATION_LINE_WIDTH) {
+          // Use startPoint and pos (current mouse up) as the two defining points
+          newShape = { type: 'bbox', points: [startPoint, pos] };
       } else {
         toast({ title: "Shape Too Small", description: "Bounding box is too small.", variant: "default" });
       }
     } else if (currentTool === 'freehand') {
-        finalPoints = [...currentPoints, pos]; // Add last point on mouseUp
+        // Add the final mouse up point to the freehand shape
+        finalPoints = [...currentPoints, pos];
         if (finalPoints.length > 1) {
           newShape = { type: 'freehand', points: finalPoints };
         } else {
@@ -376,77 +538,119 @@ export function AnnotationCanvas({
     if (newShape) {
       onShapeDrawn(newShape);
     }
-    
-    if (currentTool !== 'polygon') { 
+
+    if (currentTool !== 'polygon') {
         setIsDrawing(false);
         setStartPoint(null);
         setCurrentPoints([]);
     } else {
-      // For polygon, mouseUp might not end drawing if it's adding a point.
-      // MouseDown adds point, mouseUp for polygon might not do anything specific unless it's the final point
-      // (which is handled by double click). So setIsDrawing(false) here might be too early for polygon drag-to-place-point.
-      // For click-to-place points, MouseDown sets point, MouseUp is irrelevant for polygon point adding.
-      // The existing logic in MouseDown adds point to currentPoints for polygon.
-      // Let's keep isDrawing true for polygon until double click.
-      // However, if mouse is simply released without moving (after a mousedown that added a point), state should be fine.
-      // To allow next click to add a new point, isDrawing should be effectively false after this click.
-      // The current logic is: mousedown sets a point. If it's mouseup now, that point is set.
-      // The `isDrawing` state is more for continuous drawing like bbox/freehand.
-      // Let's reset `isDrawing` if it's not a drag for polygon.
-      // No, polygon points are added on MOUSE DOWN. So MouseUp is not for adding polygon points.
-      // MouseUp for polygon should not clear points, it's just the end of a potential drag for a point (if we implement that)
-      // Since we are doing click-to-add, isDrawing should remain true for Polygon until double click.
-      // No, isDrawing can be false. The currentPoints.length > 0 indicates polygon drawing is in progress.
-       setIsDrawing(false); 
-       // startPoint remains the first point of polygon.
+       // For polygon, mouseUp doesn't finish drawing, only mouseDown adds points.
+       // Keep state for next click.
+       setIsDrawing(false); // Stop drawing state, but keep points and start point.
     }
+     redrawCanvas(); // Ensure canvas updates after drawing stops/shape potentially discarded
   };
-  
+
   const handleDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (currentTool === 'polygon' && currentPoints.length > 2) {
+        // Final click point is added on MouseDown, so currentPoints is complete
         const newShape: ShapeData = { type: 'polygon', points: [...currentPoints] };
         onShapeDrawn(newShape);
         setCurrentPoints([]);
-        setIsDrawing(false); 
-        setStartPoint(null);
-    } else if (currentTool === 'polygon' && currentPoints.length <= 2) {
-        toast({ title: "Polygon Too Small", description: "A polygon needs at least 3 points. Discarded current points.", variant: "default" });
-        setCurrentPoints([]); 
         setIsDrawing(false);
         setStartPoint(null);
+        redrawCanvas();
+    } else if (currentTool === 'polygon' && currentPoints.length <= 2) {
+        toast({ title: "Polygon Too Small", description: "A polygon needs at least 3 points. Discarded current points.", variant: "default" });
+        setCurrentPoints([]);
+        setIsDrawing(false);
+        setStartPoint(null);
+        redrawCanvas();
     }
   };
 
+    const resetView = () => {
+      const container = containerRef.current;
+      if (!container || !imageDimensions) return;
+       const { width: displayWidth, height: displayHeight } = container.getBoundingClientRect();
+       const { naturalWidth, naturalHeight } = imageDimensions;
 
-  if (!imageSrc) {
-    return (
-      <div className="flex items-center justify-center h-full border-2 border-dashed border-muted-foreground/50 rounded-lg bg-muted/20 p-8">
-        <p className="text-muted-foreground">Upload an image to begin annotation.</p>
-      </div>
-    );
-  }
-  
+       const scaleX = displayWidth / naturalWidth;
+       const scaleY = displayHeight / naturalHeight;
+       const newZoom = Math.min(scaleX, scaleY) * 0.95; // Fit with padding
+
+       const newOffsetX = (displayWidth - naturalWidth * newZoom) / 2;
+       const newOffsetY = (displayHeight - naturalHeight * newZoom) / 2;
+
+       setZoom(newZoom);
+       setOffset({ x: newOffsetX, y: newOffsetY });
+    };
+
+
+  // Determine cursor based on state
+   const getCursor = () => {
+      if (isPanning) return 'grabbing';
+      if (currentTool === 'select') {
+          return selectedAnnotationId ? 'move' : 'default';
+      }
+      return 'crosshair';
+   };
+
+
   return (
-    <div 
-      className="w-full h-full bg-muted/10 rounded-md shadow-inner relative flex items-center justify-center overflow-hidden"
+    <div
+      ref={containerRef}
+      className="w-full h-full bg-muted/10 rounded-md shadow-inner relative flex items-center justify-center overflow-hidden touch-none" // Added touch-none
       data-ai-hint="annotation canvas container"
-      tabIndex={0} // Make div focusable for keyboard events, though listener is on document
+      tabIndex={0} // Make div focusable for keyboard events if needed
+      onWheel={handleWheel} // Attach wheel listener to the container
     >
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onMouseLeave={() => { // Stop panning/drawing if mouse leaves canvas
+            if (isPanning) {
+                setIsPanning(false);
+                setPanStart(null);
+                 canvasRef.current?.style.setProperty('cursor', '');
+            }
+            // Optionally stop drawing if needed, though mouseup usually handles this
+            // if (isDrawing && currentTool !== 'polygon') {
+            //     setIsDrawing(false);
+            //     // Decide whether to discard or complete shape on mouse leave
+            //     setCurrentPoints([]);
+            //     setStartPoint(null);
+            //     redrawCanvas();
+            // }
+        }}
         onDoubleClick={handleDoubleClick}
-        className={`cursor-${currentTool === 'select' && selectedAnnotationId ? 'move' : currentTool === 'select' ? 'default' : 'crosshair'}`}
+        className={cn(`cursor-${getCursor()}`)} // Dynamic cursor
         style={{
-          display: 'block', 
-          maxWidth: '100%',  
-          maxHeight: '100%', 
-          objectFit: 'contain', 
+          display: 'block',
+          // Canvas internal size is set dynamically, these ensure it doesn't overflow container visually
+          maxWidth: '100%',
+          maxHeight: '100%',
+          // objectFit not applicable to canvas element directly
         }}
         data-ai-hint="annotation area"
       />
+       {/* Zoom Controls Overlay */}
+       <div className="absolute top-2 left-2 flex flex-col space-y-1 bg-background/70 p-1 rounded-md shadow">
+            <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleZoom(1.2)} aria-label="Zoom In">
+                <Plus size={16} />
+            </Button>
+            <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleZoom(0.8)} aria-label="Zoom Out">
+                <Minus size={16} />
+            </Button>
+             <Button variant="outline" size="icon" className="h-7 w-7" onClick={resetView} aria-label="Reset View">
+                <Expand size={16} />
+            </Button>
+            <div className="text-center text-xs font-medium bg-muted/50 px-1 py-0.5 rounded-sm tabular-nums">
+                 {`${Math.round(zoom * 100)}%`}
+            </div>
+        </div>
     </div>
   );
 }
