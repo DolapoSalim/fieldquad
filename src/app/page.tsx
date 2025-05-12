@@ -12,8 +12,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/use-toast";
 import { Leaf, ImageOff } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+
 
 // Helper to generate distinct colors
 const PREDEFINED_COLORS = [
@@ -41,6 +45,14 @@ export default function FieldQuadPage(): JSX.Element {
   const [pendingShapeData, setPendingShapeData] = useState<ShapeData | null>(null);
   const [isClassAssignmentDialogOpen, setIsClassAssignmentDialogOpen] = useState(false);
   const [isEditClassDialogOpen, setIsEditClassDialogOpen] = useState(false);
+  const [isRenameClassDialogOpen, setIsRenameClassDialogOpen] = useState(false);
+  const [classToRename, setClassToRename] = useState<AnnotationClass | null>(null);
+  const [newClassNameInput, setNewClassNameInput] = useState('');
+
+  // Confirmation dialog state
+  const [classToDelete, setClassToDelete] = useState<AnnotationClass | null>(null);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+
 
   const { toast } = useToast();
 
@@ -73,6 +85,8 @@ export default function FieldQuadPage(): JSX.Element {
       setPendingShapeData(null); // Clear any pending shape
       setIsClassAssignmentDialogOpen(false); // Close dialogs
       setIsEditClassDialogOpen(false);
+      setIsRenameClassDialogOpen(false); // Close rename dialog too
+      setClassToRename(null);
       const imageName = batchImages.find(img => img.id === id)?.file.name;
       toast({ title: "Image Switched", description: `Now annotating: ${imageName || 'selected image'}` });
     }
@@ -106,6 +120,8 @@ export default function FieldQuadPage(): JSX.Element {
        setPendingShapeData(null);
        setIsClassAssignmentDialogOpen(false);
        setIsEditClassDialogOpen(false);
+       setIsRenameClassDialogOpen(false);
+       setClassToRename(null);
      }
   }, [batchImages, activeImageId, toast]);
 
@@ -211,30 +227,122 @@ export default function FieldQuadPage(): JSX.Element {
     setIsEditClassDialogOpen(false);
   };
 
-  // --- Class Management (Remains Global) ---
+  // --- Class Management (Global) ---
 
   const handleCreateClass = (name: string) => {
-    const existingClass = annotationClasses.find(ac => ac.name.toLowerCase() === name.toLowerCase());
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+
+    const existingClass = annotationClasses.find(ac => ac.name.toLowerCase() === trimmedName.toLowerCase());
     if (existingClass) {
       setSelectedClassIdForToolbar(existingClass.id);
-      toast({ title: "Class Exists", description: `Class "${existingClass.name}" already exists.`});
+      toast({ title: "Class Exists", description: `Class "${existingClass.name}" already exists.`, variant: "destructive"});
       return;
     }
 
     const newClass: AnnotationClass = {
       id: crypto.randomUUID(),
-      name: name,
+      name: trimmedName,
       color: PREDEFINED_COLORS[colorIndex % PREDEFINED_COLORS.length],
     };
     colorIndex++;
     setAnnotationClasses(prev => [...prev, newClass]);
     setSelectedClassIdForToolbar(newClass.id); // Select the newly created class in toolbar
-    toast({ title: "Class Created", description: `New class "${name}" added.`});
+    toast({ title: "Class Created", description: `New class "${trimmedName}" added.`});
   };
 
   const handleSelectClassForToolbar = (classId: string) => {
     setSelectedClassIdForToolbar(classId);
     // Potentially add highlighting logic here later if needed
+  };
+
+  const handleDeleteClass = (classIdToDelete: string) => {
+      const classInfo = annotationClasses.find(ac => ac.id === classIdToDelete);
+      if (!classInfo) return;
+      setClassToDelete(classInfo);
+      setIsDeleteConfirmOpen(true);
+  };
+
+  const confirmDeleteClass = () => {
+      if (!classToDelete) return;
+
+      const deletedClassName = classToDelete.name;
+
+      // 1. Remove the class itself
+      setAnnotationClasses(prev => prev.filter(ac => ac.id !== classToDelete.id));
+
+      // 2. Remove annotations associated with this class from all images in the batch
+      let annotationsRemovedCount = 0;
+      setBatchImages(prevBatch => prevBatch.map(img => {
+          const annotationsBefore = img.annotations.length;
+          const updatedAnnotations = img.annotations.filter(ann => ann.classId !== classToDelete.id);
+          annotationsRemovedCount += (annotationsBefore - updatedAnnotations.length);
+          return { ...img, annotations: updatedAnnotations };
+      }));
+
+      // 3. Update selected class in toolbar if necessary
+      if (selectedClassIdForToolbar === classToDelete.id) {
+          const remainingClasses = annotationClasses.filter(ac => ac.id !== classToDelete.id);
+          setSelectedClassIdForToolbar(remainingClasses.length > 0 ? remainingClasses[0].id : null);
+      }
+
+      // 4. Deselect annotation if it belonged to the deleted class
+      const currentlySelectedAnnotation = activeAnnotations.find(ann => ann.id === selectedAnnotationId);
+      if (currentlySelectedAnnotation && currentlySelectedAnnotation.classId === classToDelete.id) {
+          setSelectedAnnotationId(null);
+      }
+
+
+      toast({
+          title: "Class Deleted",
+          description: `Class "${deletedClassName}" and ${annotationsRemovedCount} associated annotation(s) across the batch were removed.`,
+      });
+
+      // Reset confirmation state
+      setIsDeleteConfirmOpen(false);
+      setClassToDelete(null);
+  };
+
+  const handleOpenRenameDialog = (classIdToRename: string) => {
+      const classInfo = annotationClasses.find(ac => ac.id === classIdToRename);
+      if (classInfo) {
+          setClassToRename(classInfo);
+          setNewClassNameInput(classInfo.name); // Pre-fill input with current name
+          setIsRenameClassDialogOpen(true);
+      }
+  };
+
+  const handleRenameClass = () => {
+      if (!classToRename) return;
+      const trimmedNewName = newClassNameInput.trim();
+
+      if (!trimmedNewName) {
+          toast({ title: "Invalid Name", description: "Class name cannot be empty.", variant: "destructive" });
+          return;
+      }
+
+      // Check if the new name already exists (case-insensitive), excluding the current class being renamed
+      const existingClass = annotationClasses.find(ac =>
+          ac.name.toLowerCase() === trimmedNewName.toLowerCase() && ac.id !== classToRename.id
+      );
+      if (existingClass) {
+          toast({ title: "Name Exists", description: `Another class named "${existingClass.name}" already exists.`, variant: "destructive" });
+          return;
+      }
+
+      // Update the class name
+      setAnnotationClasses(prev =>
+          prev.map(ac =>
+              ac.id === classToRename.id ? { ...ac, name: trimmedNewName } : ac
+          )
+      );
+
+      toast({ title: "Class Renamed", description: `Class "${classToRename.name}" renamed to "${trimmedNewName}".` });
+
+      // Close dialog and reset state
+      setIsRenameClassDialogOpen(false);
+      setClassToRename(null);
+      setNewClassNameInput('');
   };
 
 
@@ -283,7 +391,7 @@ export default function FieldQuadPage(): JSX.Element {
     // Keyboard listener for deleting selected annotation
     const handleKeyDown = (event: KeyboardEvent) => {
       if (selectedAnnotationId && (event.key === 'Delete' || event.key === 'Backspace')) {
-        // Prevent browser back navigation on Backspace, unless focused on input
+        // Prevent browser back navigation on Backspace, unless focused on input/textarea
         if (event.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) {
           return;
         }
@@ -329,6 +437,8 @@ export default function FieldQuadPage(): JSX.Element {
             onClassCreate={handleCreateClass}
             selectedClassIdForToolbar={selectedClassIdForToolbar}
             onClassSelectForToolbar={handleSelectClassForToolbar}
+            onClassDelete={handleDeleteClass} // Pass delete handler
+            onClassRename={handleOpenRenameDialog} // Pass rename handler
             selectedAnnotationId={selectedAnnotationId}
             onDeleteSelectedAnnotation={handleDeleteSelectedAnnotation}
             onOpenEditClassDialog={handleOpenEditClassDialog}
@@ -452,6 +562,64 @@ export default function FieldQuadPage(): JSX.Element {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog for renaming an annotation class */}
+       <Dialog open={isRenameClassDialogOpen} onOpenChange={(isOpen) => {
+           setIsRenameClassDialogOpen(isOpen);
+           if (!isOpen) {
+               setClassToRename(null); // Clear state if dialog closed
+               setNewClassNameInput('');
+           }
+       }}>
+          <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                  <DialogTitle>Rename Annotation Class</DialogTitle>
+                  <DialogDescription>
+                      Enter a new name for the class "{classToRename?.name}".
+                  </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="rename-class-input" className="text-right">
+                          New Name
+                      </Label>
+                      <Input
+                          id="rename-class-input"
+                          value={newClassNameInput}
+                          onChange={(e) => setNewClassNameInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleRenameClass()}
+                          className="col-span-3"
+                          autoFocus
+                      />
+                  </div>
+              </div>
+              <DialogFooter>
+                  <Button variant="ghost" onClick={() => setIsRenameClassDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={handleRenameClass} disabled={!newClassNameInput.trim()}>Save Changes</Button>
+              </DialogFooter>
+          </DialogContent>
+       </Dialog>
+
+       {/* Confirmation Dialog for Deleting Class */}
+       <AlertDialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+           <AlertDialogContent>
+               <AlertDialogHeader>
+                   <AlertDialogTitle>Delete Annotation Class?</AlertDialogTitle>
+                   <AlertDialogDescription>
+                       Are you sure you want to delete the class "{classToDelete?.name}"?
+                       <br />
+                       <strong className="text-destructive">Warning:</strong> This action will also remove all annotations assigned to this class across all images in the current batch. This cannot be undone.
+                   </AlertDialogDescription>
+               </AlertDialogHeader>
+               <AlertDialogFooter>
+                   <AlertDialogCancel onClick={() => setClassToDelete(null)}>Cancel</AlertDialogCancel>
+                   <AlertDialogAction onClick={confirmDeleteClass} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                       Delete Class & Annotations
+                   </AlertDialogAction>
+               </AlertDialogFooter>
+           </AlertDialogContent>
+       </AlertDialog>
+
 
       <Toaster />
     </div>

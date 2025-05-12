@@ -7,11 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BoxSelect, Brush, PenTool, PlusSquare, Spline, MousePointer2, Palette, Trash2, Hand } from 'lucide-react'; // Added Hand icon
+import { BoxSelect, Brush, PenTool, PlusSquare, Spline, MousePointer2, Palette, Trash2, Hand, Pencil } from 'lucide-react'; // Added Hand, Pencil icon
 import type { AnnotationTool, AnnotationClass } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"; // Import Tooltip components
 
 interface AnnotationToolbarProps {
   currentTool: AnnotationTool;
@@ -20,6 +21,8 @@ interface AnnotationToolbarProps {
   onClassCreate: (name: string) => void;
   selectedClassIdForToolbar: string | null; // Renamed for clarity
   onClassSelectForToolbar: (classId: string) => void;
+  onClassDelete: (classId: string) => void; // Added prop for deleting class
+  onClassRename: (classId: string) => void; // Added prop for initiating rename
   selectedAnnotationId: string | null; // ID of annotation selected on canvas
   onDeleteSelectedAnnotation: () => void;
   onOpenEditClassDialog: () => void;
@@ -51,6 +54,8 @@ export function AnnotationToolbar({
   onClassCreate,
   selectedClassIdForToolbar,
   onClassSelectForToolbar,
+  onClassDelete, // Receive handler
+  onClassRename, // Receive handler
   selectedAnnotationId, // Keep for potential future use (e.g., showing selected annotation details)
   onDeleteSelectedAnnotation,
   onOpenEditClassDialog,
@@ -157,27 +162,60 @@ export function AnnotationToolbar({
             <Palette size={16} className="mr-2 text-primary" /> Annotation Classes
           </Label>
           <p className="text-xs text-muted-foreground">
-            Manage classes below. New annotations will prompt for class selection after drawing. Click a class to highlight (feature coming soon).
+            Manage classes below. New annotations will prompt for class selection after drawing.
           </p>
           <ScrollArea className="h-32 w-full rounded-md border p-2 custom-scrollbar bg-background/50">
-            {annotationClasses.length > 0 ? (
-              <div className="space-y-1">
-                {annotationClasses.map((ac) => (
-                  <Button
-                    key={ac.id}
-                    variant={selectedClassIdForToolbar === ac.id ? 'secondary' : 'ghost'}
-                    size="sm"
-                    className="w-full justify-start text-left h-auto py-1.5 px-2"
-                    onClick={() => onClassSelectForToolbar(ac.id)}
-                  >
-                    <span style={{ backgroundColor: ac.color }} className="mr-2 h-3 w-3 rounded-full inline-block border border-foreground/20 shrink-0"></span>
-                    <span className="truncate flex-1 min-w-0">{ac.name}</span>
-                  </Button>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center p-2">No classes created yet. Add a class below.</p>
-            )}
+            <TooltipProvider delayDuration={300}>
+             {annotationClasses.length > 0 ? (
+                <div className="space-y-1">
+                  {annotationClasses.map((ac) => (
+                    <div key={ac.id} className="flex items-center justify-between group">
+                        <Button
+                          variant={selectedClassIdForToolbar === ac.id ? 'secondary' : 'ghost'}
+                          size="sm"
+                          className="flex-1 justify-start text-left h-auto py-1.5 px-2 mr-1" // Added mr-1 for spacing
+                          onClick={() => onClassSelectForToolbar(ac.id)}
+                        >
+                          <span style={{ backgroundColor: ac.color }} className="mr-2 h-3 w-3 rounded-full inline-block border border-foreground/20 shrink-0"></span>
+                          <span className="truncate flex-1 min-w-0">{ac.name}</span>
+                        </Button>
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => { e.stopPropagation(); onClassRename(ac.id); }}
+                                    aria-label={`Rename class ${ac.name}`}
+                                >
+                                    <Pencil size={14} />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">Rename Class</TooltipContent>
+                          </Tooltip>
+                           <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                    onClick={(e) => { e.stopPropagation(); onClassDelete(ac.id); }}
+                                    aria-label={`Delete class ${ac.name}`}
+                                >
+                                    <Trash2 size={14} />
+                                </Button>
+                           </TooltipTrigger>
+                           <TooltipContent side="top">Delete Class</TooltipContent>
+                          </Tooltip>
+                        </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center p-2">No classes created yet. Add a class below.</p>
+              )}
+             </TooltipProvider>
           </ScrollArea>
 
           <div className="space-y-2 pt-2">
@@ -198,11 +236,6 @@ export function AnnotationToolbar({
               </Button>
             </div>
           </div>
-           {/* {selectedClassIdForToolbar && annotationClasses.find(ac => ac.id === selectedClassIdForToolbar) && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Highlighting annotations for: <span className="font-semibold truncate">{annotationClasses.find(ac => ac.id === selectedClassIdForToolbar)?.name}</span>
-            </p>
-          )} */}
         </div>
       </CardContent>
     </Card>
