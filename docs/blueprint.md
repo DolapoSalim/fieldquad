@@ -1,4 +1,4 @@
-# **App Name**: FieldQuAD
+# **Name**: FieldQuAD
 
 ## Core Features:
 
