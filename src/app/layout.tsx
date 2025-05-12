@@ -15,6 +15,11 @@ const roboto = Roboto({
 export const metadata: Metadata = {
   title: 'FieldQuAD - Field Quadrant Annotator',
   description: 'Annotate images of fieldwork quadrants with ease.',
+  // Favicon links are automatically handled by Next.js when using icon.tsx/favicon.ico
+  // icons: {
+  //   icon: '/favicon.ico', // Keep if you have a static favicon.ico
+  //   // other icons...
+  // },
 };
 
 export default function RootLayout({
