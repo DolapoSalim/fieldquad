@@ -1,4 +1,5 @@
 
+
 export type AnnotationTool = 'select' | 'bbox' | 'polygon' | 'freehand';
 
 export interface Point {
@@ -42,4 +43,14 @@ export type CoordinateExportType =
   | 'json_original' 
   | 'json_normalized';
 
+export type CoverageExportFormat = 'json' | 'txt' | 'csv'; // Changed 'xlsx' to 'csv' for simplicity
+
+// Represents the state for a single image within a batch
+export interface ImageState {
+  id: string; // Unique identifier for the image within the batch (e.g., filename or UUID)
+  file: File;
+  src: string;
+  dimensions: ImageDimensions | null;
+  annotations: Annotation[];
+}
     

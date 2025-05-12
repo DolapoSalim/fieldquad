@@ -18,11 +18,13 @@ interface AnnotationToolbarProps {
   onToolChange: (tool: AnnotationTool) => void;
   annotationClasses: AnnotationClass[];
   onClassCreate: (name: string) => void;
-  selectedClassIdForNewAnnotation: string | null; 
+  selectedClassIdForToolbar: string | null; // Renamed for clarity
   onClassSelectForToolbar: (classId: string) => void; 
-  selectedAnnotationId: string | null; 
+  selectedAnnotationId: string | null; // ID of annotation selected on canvas
   onDeleteSelectedAnnotation: () => void; 
-  onOpenEditClassDialog: () => void; // New prop
+  onOpenEditClassDialog: () => void;
+  isAnnotationSelected: boolean; // Pass boolean for easier disabling
+  canAnnotate: boolean; // Indicates if an image is active and classes exist
 }
 
 const toolIcons: Record<AnnotationTool, React.ElementType> = {
@@ -44,11 +46,13 @@ export function AnnotationToolbar({
   onToolChange,
   annotationClasses,
   onClassCreate,
-  selectedClassIdForNewAnnotation,
+  selectedClassIdForToolbar,
   onClassSelectForToolbar,
-  selectedAnnotationId,
+  selectedAnnotationId, // Keep for potential future use (e.g., showing selected annotation details)
   onDeleteSelectedAnnotation,
   onOpenEditClassDialog, 
+  isAnnotationSelected,
+  canAnnotate,
 }: AnnotationToolbarProps): JSX.Element {
   const [newClassName, setNewClassName] = useState('');
 
@@ -59,23 +63,32 @@ export function AnnotationToolbar({
     }
   };
 
+  const drawingToolsDisabled = !canAnnotate; // Disable drawing tools if no active image or no classes
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-xl">Tools & Classes</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Annotation Tool Selection */}
         <div>
           <Label htmlFor="annotation-tool-select" className="mb-2 block text-sm font-medium">Annotation Tool</Label>
-          <Select value={currentTool} onValueChange={(value) => onToolChange(value as AnnotationTool)}>
+          <Select 
+            value={currentTool} 
+            onValueChange={(value) => onToolChange(value as AnnotationTool)}
+            // Disable drawing tools if cannot annotate
+            disabled={currentTool !== 'select' && drawingToolsDisabled} 
+          >
             <SelectTrigger id="annotation-tool-select" className="bg-background">
               <SelectValue placeholder="Select an annotation tool" />
             </SelectTrigger>
             <SelectContent>
               {(Object.keys(toolIcons) as AnnotationTool[]).map((tool) => {
                 const Icon = toolIcons[tool];
+                const isDisabled = tool !== 'select' && drawingToolsDisabled;
                 return (
-                  <SelectItem key={tool} value={tool}>
+                  <SelectItem key={tool} value={tool} disabled={isDisabled}>
                     <div className="flex items-center">
                       <Icon className="mr-2 h-4 w-4 shrink-0" />
                       <span>{toolNames[tool]}</span>
@@ -85,16 +98,22 @@ export function AnnotationToolbar({
               })}
             </SelectContent>
           </Select>
+           {drawingToolsDisabled && currentTool !== 'select' && (
+             <p className="mt-1 text-xs text-destructive">
+               Upload an image and create a class to enable drawing tools.
+             </p>
+           )}
         </div>
 
-        {currentTool === 'select' && selectedAnnotationId && (
-          <div className="space-y-2 pt-2">
-             <Label className="text-sm font-medium">Selected Annotation</Label>
+        {/* Selected Annotation Actions (only visible/enabled when select tool is active and annotation selected) */}
+         {currentTool === 'select' && (
+          <div className="space-y-2 pt-2 border-t border-border mt-4">
+             <Label className="text-sm font-medium text-muted-foreground">Selected Annotation Actions</Label>
             <Button 
               variant="outline" 
               className="w-full" 
               onClick={onOpenEditClassDialog}
-              disabled={!selectedAnnotationId}
+              disabled={!isAnnotationSelected}
             >
               <Palette className="mr-2 h-4 w-4 shrink-0" /> Change Class
             </Button>
@@ -102,32 +121,38 @@ export function AnnotationToolbar({
               variant="destructive" 
               className="w-full" 
               onClick={onDeleteSelectedAnnotation}
-              disabled={!selectedAnnotationId}
+              disabled={!isAnnotationSelected}
             >
               <Trash2 className="mr-2 h-4 w-4 shrink-0" /> Delete Selected
             </Button>
-             <p className="mt-1 text-xs text-muted-foreground text-center">
-              (Or press Delete/Backspace key)
-            </p>
+             {isAnnotationSelected && (
+               <p className="mt-1 text-xs text-muted-foreground text-center">
+                (Or press Delete/Backspace key)
+               </p>
+             )}
+             {!isAnnotationSelected && (
+                <p className="mt-1 text-xs text-muted-foreground text-center">
+                 Click an annotation on the canvas to select it.
+                </p>
+             )}
           </div>
-        )}
+         )}
         
-        <Separator />
-
-        <div className="space-y-3">
+        {/* Annotation Classes */}
+        <div className="space-y-3 pt-4 border-t border-border">
           <Label className="text-sm font-medium flex items-center">
             <Palette size={16} className="mr-2 text-primary" /> Annotation Classes
           </Label>
           <p className="text-xs text-muted-foreground">
-            Select a class to highlight its annotations or create new classes below. New annotations will prompt for class selection after drawing.
+            Manage classes below. New annotations will prompt for class selection after drawing. Click a class to highlight (feature coming soon).
           </p>
-          <ScrollArea className="h-40 w-full rounded-md border p-2 custom-scrollbar">
+          <ScrollArea className="h-32 w-full rounded-md border p-2 custom-scrollbar bg-background/50">
             {annotationClasses.length > 0 ? (
               <div className="space-y-1">
                 {annotationClasses.map((ac) => (
                   <Button
                     key={ac.id}
-                    variant={selectedClassIdForNewAnnotation === ac.id ? 'secondary' : 'ghost'}
+                    variant={selectedClassIdForToolbar === ac.id ? 'secondary' : 'ghost'}
                     size="sm"
                     className="w-full justify-start text-left h-auto py-1.5 px-2"
                     onClick={() => onClassSelectForToolbar(ac.id)}
@@ -144,23 +169,27 @@ export function AnnotationToolbar({
          
           <div className="space-y-2 pt-2">
             <Label htmlFor="new-class-name-input" className="text-sm font-medium">Add New Class</Label>
-            <Input
-              id="new-class-name-input"
-              type="text"
-              placeholder="Enter class name"
-              value={newClassName}
-              onChange={(e) => setNewClassName(e.target.value)}
-              className="text-sm h-9 bg-background"
-            />
-            <Button onClick={handleCreateClass} variant="secondary" className="w-full h-9">
-              <PlusSquare className="mr-2 h-4 w-4 shrink-0" /> Create Class
-            </Button>
+            <div className="flex space-x-2">
+              <Input
+                id="new-class-name-input"
+                type="text"
+                placeholder="Enter class name"
+                value={newClassName}
+                onChange={(e) => setNewClassName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateClass()}
+                className="text-sm h-9 bg-background flex-1"
+              />
+              <Button onClick={handleCreateClass} variant="secondary" className="h-9 px-3" disabled={!newClassName.trim()}>
+                <PlusSquare className="h-4 w-4 shrink-0" /> 
+                <span className="ml-2 hidden sm:inline">Add</span>
+              </Button>
+            </div>
           </div>
-           {selectedClassIdForNewAnnotation && annotationClasses.find(ac => ac.id === selectedClassIdForNewAnnotation) && (
+           {/* {selectedClassIdForToolbar && annotationClasses.find(ac => ac.id === selectedClassIdForToolbar) && (
             <p className="mt-1 text-xs text-muted-foreground">
-              Highlighting annotations for: <span className="font-semibold truncate">{annotationClasses.find(ac => ac.id === selectedClassIdForNewAnnotation)?.name}</span>
+              Highlighting annotations for: <span className="font-semibold truncate">{annotationClasses.find(ac => ac.id === selectedClassIdForToolbar)?.name}</span>
             </p>
-          )}
+          )} */}
         </div>
       </CardContent>
     </Card>
