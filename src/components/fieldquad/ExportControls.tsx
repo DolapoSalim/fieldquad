@@ -1,4 +1,3 @@
-
 "use client";
 
 import type React from 'react';
@@ -25,12 +24,12 @@ interface ExportControlsProps {
 // Helper function to calculate the area of a polygon using the Shoelace formula
 function calculatePolygonArea(points: Point[]): number {
   const n = points.length;
-  if (n < 3) return 0; 
+  if (n < 3) return 0;
 
   let area = 0;
   for (let i = 0; i < n; i++) {
     const p1 = points[i];
-    const p2 = points[(i + 1) % n]; 
+    const p2 = points[(i + 1) % n];
     area += (p1.x * p2.y) - (p2.x * p1.y);
   }
   return Math.abs(area) / 2;
@@ -102,36 +101,38 @@ export function ExportControls({
     fileContent += '\n';
 
     batchImages.forEach(imgState => {
-      if (!imgState.dimensions || imgState.annotations.length === 0) return;
+      if (!imgState.dimensions || imgState.annotations.length === 0) return; // Skip images with no annotations or dimensions
 
+      // Image Header Block (Acts like a row/entry for the image)
       fileContent += `## Image: ${imgState.file.name}\n`;
       fileContent += `## Image Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight} pixels\n`;
 
+      // Annotations for this image
       imgState.annotations.forEach(ann => {
         const numericClassId = classIdToNumericIdMap.get(ann.classId);
-        if (numericClassId === undefined) return; 
+        if (numericClassId === undefined) return;
 
         let pointsToExport = ann.points;
          // Ensure consistent BBox point order (top-left, bottom-right) for export
         if (ann.type === 'bbox' && ann.points.length === 2) {
             const [p1, p2] = ann.points;
             pointsToExport = [
-                {x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)}, 
+                {x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)},
                 {x: Math.max(p1.x, p2.x), y: Math.max(p1.y, p2.y)}
             ];
         }
-        
+
         const coordsStr = pointsToExport.map(p => {
           const formattedP = formatPointForExport(p, coordFormat, imgState.dimensions as ImageDimensions);
           return `${formattedP.x} ${formattedP.y}`;
         }).join(' ');
         fileContent += `${numericClassId} ${coordsStr}\n`;
       });
-       fileContent += '\n'; // Separator between images
+       fileContent += '\n'; // Separator between image blocks
     });
     return fileContent;
   };
-  
+
   const generateJsonAnnotationFileContent = (coordFormat: ExportFormat): string => {
     const classIdToNumericIdMap = new Map<string, number>();
     const formattedAnnotationClasses = annotationClasses.map((ac, index) => {
@@ -151,11 +152,11 @@ export function ExportControls({
            if (ann.type === 'bbox' && ann.points.length === 2) {
                const [p1, p2] = ann.points;
                pointsToExport = [
-                   {x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)}, 
+                   {x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y)},
                    {x: Math.max(p1.x, p2.x), y: Math.max(p1.y, p2.y)}
                ];
            }
-           
+
            return {
                classId: numericClassId,
                type: ann.type,
@@ -163,6 +164,7 @@ export function ExportControls({
            };
        }).filter(ann => ann !== null);
 
+       // Each element in this array represents an image (like a row)
        return {
            imageInfo: {
                name: imgState.file.name,
@@ -179,7 +181,7 @@ export function ExportControls({
             annotationClasses: formattedAnnotationClasses,
             date: new Date().toISOString(),
         },
-        images: batchData,
+        images: batchData, // Array where each element is an image's data
     };
 
     return JSON.stringify(outputData, null, 2);
@@ -252,6 +254,7 @@ export function ExportControls({
     downloadFile(fileContent, filename, mimeType);
   };
 
+  // Prepares coverage data: List where each item is stats for one class in one image
   const prepareCoverageData = (): PreparedCoverageData | null => {
      if (batchImages.length === 0) {
         toast({ title: "No Images", description: "Upload images to calculate coverage.", variant: "default" });
@@ -281,23 +284,24 @@ export function ExportControls({
             const annotationsForClass = annotations.filter(ann => ann.classId === ac.id);
             const totalAreaForClass = annotationsForClass.reduce((sum, ann) => sum + calculateSingleAnnotationArea(ann), 0);
             const percentageCoverage = (totalAreaForClass / totalImageArea) * 100;
-            
+
             allCoverageData.push({
                 imageName: file.name, // Include image name
                 classId: ac.id,
                 className: ac.name,
-                numericId: index,
-                color: ac.color,
+                numericId: index, // Numeric ID might still be useful for some contexts
+                color: ac.color, // Color might be useful for some contexts
                 annotationCount: annotationsForClass.length,
                 totalPixelArea: parseFloat(totalAreaForClass.toFixed(2)),
                 percentageCoverage: parseFloat(percentageCoverage.toFixed(2)),
             });
         });
      });
-    
+
      if (allCoverageData.length === 0 && batchImages.some(img => img.annotations.length > 0)) {
-        toast({ title: "Calculation Error", description: "Could not calculate coverage. Check data.", variant: "destructive" });
-        return null;
+        // This case means annotations exist, but maybe classes don't match or areas are zero
+        toast({ title: "Calculation Info", description: "No coverage calculated. Ensure annotations are assigned to existing classes.", variant: "default" });
+        return null; // Return null as no valid coverage data was generated
      }
      if (allCoverageData.length === 0 && !batchImages.some(img => img.annotations.length > 0)) {
         toast({ title: "No Annotations", description: "No annotations found in the batch to calculate coverage.", variant: "default" });
@@ -310,66 +314,130 @@ export function ExportControls({
 
   const generateCoverageFileContent = (data: PreparedCoverageData, format: CoverageExportFormat): string => {
     if (format === 'json') {
-      // Structure JSON by image for clarity
-      const groupedData: Record<string, Omit<CoverageDataItem, 'imageName'>[]> = {};
+      // Structure JSON by image for clarity - Each image is a key/entry
+      const groupedData: Record<string, {width: number, height: number, coverageStats: Omit<CoverageDataItem, 'imageName'>[]}> = {};
       data.forEach(item => {
         if (!groupedData[item.imageName]) {
-          groupedData[item.imageName] = [];
+          const imgDetails = batchImages.find(img => img.file.name === item.imageName)?.dimensions;
+          groupedData[item.imageName] = {
+            width: imgDetails?.naturalWidth ?? 0,
+            height: imgDetails?.naturalHeight ?? 0,
+            coverageStats: []
+          };
         }
         const { imageName, ...rest } = item;
-        groupedData[item.imageName].push(rest);
+        groupedData[item.imageName].coverageStats.push(rest);
       });
        const output = {
             batchExportInfo: {
                 format: 'coverage-json',
                 date: new Date().toISOString(),
             },
-            images: groupedData
+            images: groupedData // Object where each key is an image name (entry)
        }
        return JSON.stringify(output, null, 2);
     }
-    
+
     if (format === 'txt') {
       let content = `# Batch Coverage Statistics\n`;
       content += `# Date: ${new Date().toISOString()}\n\n`;
-      
+
       const imagesProcessed = new Set<string>();
-      data.forEach(stat => {
-         if (!imagesProcessed.has(stat.imageName)) {
-             const imgDetails = batchImages.find(img => img.file.name === stat.imageName)?.dimensions;
-             content += `## Image: ${stat.imageName}\n`;
-             if (imgDetails) {
-                content += `## Size: ${imgDetails.naturalWidth}x${imgDetails.naturalHeight}\n`;
-             }
-             content += "--------------------\n";
-             imagesProcessed.add(stat.imageName);
-         }
-         content += `Class Name: ${stat.className}\n`;
-         content += `Annotation Count: ${stat.annotationCount}\n`;
-         content += `Total Pixel Area: ${stat.totalPixelArea.toFixed(2)}\n`;
-         content += `Percentage Coverage: ${stat.percentageCoverage.toFixed(2)}%\n`;
-         content += "--------------------\n";
+      batchImages.forEach(imgState => {
+        if (!imgState.dimensions) return; // Skip if no dimensions
+
+        const imageName = imgState.file.name;
+        const statsForImage = data.filter(stat => stat.imageName === imageName);
+        if (statsForImage.length === 0) return; // Skip image if no stats (e.g., no annotations)
+
+        // Image Header Block (Acts like a row/entry for the image)
+        content += `## Image: ${imageName}\n`;
+        content += `## Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight}\n`;
+        content += "--------------------\n";
+
+        // Stats for this image
+        statsForImage.forEach(stat => {
+          content += `Class Name: ${stat.className}\n`;
+          content += `Annotation Count: ${stat.annotationCount}\n`;
+          content += `Total Pixel Area: ${stat.totalPixelArea.toFixed(2)}\n`;
+          content += `Percentage Coverage: ${stat.percentageCoverage.toFixed(2)}%\n`;
+          content += "--------------------\n";
+        });
+        content += '\n'; // Separator between image blocks
       });
       return content;
     }
 
     if (format === 'csv') {
-      // Add ImageName column for CSV
-      let content = "ImageName,ClassName,AnnotationCount,TotalPixelArea,PercentageCoverage\n";
-      data.forEach(stat => {
-        // Escape commas in class names if necessary
-        const classNameEscaped = `"${stat.className.replace(/"/g, '""')}"`;
-        content += `${stat.imageName},${classNameEscaped},${stat.annotationCount},${stat.totalPixelArea.toFixed(2)},${stat.percentageCoverage.toFixed(2)}\n`;
-      });
-      return content;
-    }
-    return "";
+        // CSV: Each row IS an image
+        // 1. Get all unique class names and their order
+        const sortedClasses = [...annotationClasses].sort((a, b) => a.name.localeCompare(b.name));
+        const classHeaders = sortedClasses.flatMap(ac => [
+            `${ac.name}_AnnotationCount`,
+            `${ac.name}_TotalPixelArea`,
+            `${ac.name}_PercentageCoverage`
+        ]);
+        const header = ["ImageName", "ImageWidth", "ImageHeight", ...classHeaders].join(',');
+
+        let csvRows = [header];
+
+        // 2. Group prepared data by image name and class ID for efficient lookup
+        const dataByImageAndClass: Record<string, Record<string, CoverageDataItem>> = {};
+        data.forEach(item => {
+            if (!dataByImageAndClass[item.imageName]) {
+                dataByImageAndClass[item.imageName] = {};
+            }
+            dataByImageAndClass[item.imageName][item.classId] = item;
+        });
+
+        // 3. Iterate through batch images to build rows
+        batchImages.forEach(imgState => {
+            if (!imgState.dimensions) return; // Skip if no dimensions
+
+            const imageName = imgState.file.name;
+            const imageWidth = imgState.dimensions.naturalWidth;
+            const imageHeight = imgState.dimensions.naturalHeight;
+
+            // Start the row for this image
+            const rowData = [imageName, imageWidth.toString(), imageHeight.toString()];
+
+            // 4. For each defined class, find its stats for the current image
+            sortedClasses.forEach(ac => {
+                const stats = dataByImageAndClass[imageName]?.[ac.id];
+                if (stats) {
+                    rowData.push(stats.annotationCount.toString());
+                    rowData.push(stats.totalPixelArea.toFixed(2));
+                    rowData.push(stats.percentageCoverage.toFixed(2));
+                } else {
+                    // Class exists but has no annotations in this image
+                    rowData.push("0"); // Count
+                    rowData.push("0.00"); // Area
+                    rowData.push("0.00"); // Coverage
+                }
+            });
+
+            // 5. Escape values and join the row
+            const escapedRow = rowData.map(value => {
+               const strValue = String(value);
+               if (strValue.includes(',') || strValue.includes('"') || strValue.includes('\n')) {
+                   return `"${strValue.replace(/"/g, '""')}"`;
+               }
+               return strValue;
+            });
+
+            csvRows.push(escapedRow.join(','));
+        });
+
+        return csvRows.join('\n');
+      }
+
+    return ""; // Should not happen if format is validated
   };
 
   const handleExportCoverage = (format: CoverageExportFormat) => {
     const coverageData = prepareCoverageData();
     if (!coverageData) {
-      // Toasts are handled within prepareCoverageData
+      // Toasts are handled within prepareCoverageData if there's an issue or no data
       return;
     }
 
@@ -397,6 +465,7 @@ export function ExportControls({
 
   const hasAnnotationsInBatch = batchImages.some(img => img.annotations.length > 0);
   const commonAnnotationExportDisabled = batchImages.length === 0 || !hasAnnotationsInBatch;
+  // Coverage export requires images, classes, and dimensions for all images
   const coverageExportDisabled = batchImages.length === 0 || annotationClasses.length === 0 || !batchImages.every(img => img.dimensions);
 
 
@@ -410,7 +479,7 @@ export function ExportControls({
           <h4 className="text-sm font-medium mb-2">Annotation Coordinates</h4>
            <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button 
+              <Button
                 className="w-full"
                 variant="outline"
                 disabled={commonAnnotationExportDisabled}
@@ -419,7 +488,7 @@ export function ExportControls({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
-                <DropdownMenuLabel>TXT Format</DropdownMenuLabel>
+                <DropdownMenuLabel>TXT Format (Per Image)</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => handleExportCoordinates('txt_original')} disabled={commonAnnotationExportDisabled}>
                     Original Coordinates (.txt)
                 </DropdownMenuItem>
@@ -427,7 +496,7 @@ export function ExportControls({
                     Normalized Coordinates (.txt)
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel>JSON Format</DropdownMenuLabel>
+                <DropdownMenuLabel>JSON Format (Per Image)</DropdownMenuLabel>
                  <DropdownMenuItem onClick={() => handleExportCoordinates('json_original')} disabled={commonAnnotationExportDisabled}>
                     Original Coordinates (.json)
                 </DropdownMenuItem>
@@ -436,13 +505,18 @@ export function ExportControls({
                 </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+           {commonAnnotationExportDisabled && batchImages.length > 0 && !hasAnnotationsInBatch && (
+            <p className="text-xs text-muted-foreground text-center pt-1">
+              Add annotations to enable coordinate export.
+            </p>
+           )}
         </div>
         <Separator />
         <div>
           <h4 className="text-sm font-medium mb-2">Coverage Statistics</h4>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button 
+              <Button
                 className="w-full"
                 variant="outline"
                 disabled={coverageExportDisabled}
@@ -451,6 +525,7 @@ export function ExportControls({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
+              <DropdownMenuLabel>Format (Per Image)</DropdownMenuLabel>
               <DropdownMenuItem onClick={() => handleExportCoverage('csv')} disabled={coverageExportDisabled}>
                 Spreadsheet (.csv)
               </DropdownMenuItem>
@@ -462,16 +537,16 @@ export function ExportControls({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {coverageExportDisabled && batchImages.length > 0 && (
+           <p className="text-xs text-muted-foreground text-center pt-1">
+             {annotationClasses.length === 0 ? "Add classes to enable coverage export." :
+              !batchImages.every(img => img.dimensions) ? "Image data incomplete." :
+              "Requires images, classes &amp; dimensions."
+             }
+           </p>
+          )}
         </div>
-         {(commonAnnotationExportDisabled || coverageExportDisabled) && batchImages.length > 0 && (
-          <p className="text-xs text-muted-foreground text-center pt-2">
-            { !hasAnnotationsInBatch ? "Add annotations to enable coordinate export." : 
-              (annotationClasses.length === 0) ? "Add classes to enable coverage export." :
-               !batchImages.every(img => img.dimensions) ? "Image data incomplete for coverage export." :
-              "Add data to enable exports." 
-            }
-          </p>
-        )}
+
          {batchImages.length === 0 && (
             <p className="text-xs text-muted-foreground text-center pt-2">
                 Upload images to enable export.
@@ -481,5 +556,3 @@ export function ExportControls({
     </Card>
   );
 }
-
-    
