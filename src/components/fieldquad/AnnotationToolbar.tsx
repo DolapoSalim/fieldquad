@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BoxSelect, Brush, PenTool, PlusSquare, Spline, MousePointer2, Palette, Trash2 } from 'lucide-react';
+import { BoxSelect, Brush, PenTool, PlusSquare, Spline, MousePointer2, Palette, Trash2, Hand } from 'lucide-react'; // Added Hand icon
 import type { AnnotationTool, AnnotationClass } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,23 +19,26 @@ interface AnnotationToolbarProps {
   annotationClasses: AnnotationClass[];
   onClassCreate: (name: string) => void;
   selectedClassIdForToolbar: string | null; // Renamed for clarity
-  onClassSelectForToolbar: (classId: string) => void; 
+  onClassSelectForToolbar: (classId: string) => void;
   selectedAnnotationId: string | null; // ID of annotation selected on canvas
-  onDeleteSelectedAnnotation: () => void; 
+  onDeleteSelectedAnnotation: () => void;
   onOpenEditClassDialog: () => void;
   isAnnotationSelected: boolean; // Pass boolean for easier disabling
   canAnnotate: boolean; // Indicates if an image is active and classes exist
+  activeImageId: string | null; // Added missing prop
 }
 
 const toolIcons: Record<AnnotationTool, React.ElementType> = {
   select: MousePointer2,
+  pan: Hand, // Added Pan tool icon
   bbox: BoxSelect,
   polygon: Spline,
   freehand: Brush,
 };
 
 const toolNames: Record<AnnotationTool, string> = {
-  select: 'Select/Move',
+  select: 'Select/Move Annotation',
+  pan: 'Pan Canvas', // Added Pan tool name
   bbox: 'Bounding Box',
   polygon: 'Polygon',
   freehand: 'Freehand',
@@ -50,9 +53,10 @@ export function AnnotationToolbar({
   onClassSelectForToolbar,
   selectedAnnotationId, // Keep for potential future use (e.g., showing selected annotation details)
   onDeleteSelectedAnnotation,
-  onOpenEditClassDialog, 
+  onOpenEditClassDialog,
   isAnnotationSelected,
   canAnnotate,
+  activeImageId, // Added prop
 }: AnnotationToolbarProps): JSX.Element {
   const [newClassName, setNewClassName] = useState('');
 
@@ -63,7 +67,10 @@ export function AnnotationToolbar({
     }
   };
 
-  const drawingToolsDisabled = !canAnnotate; // Disable drawing tools if no active image or no classes
+  // Disable drawing tools if no active image or no classes
+  const drawingToolsDisabled = !canAnnotate;
+  // Select/Pan tools are always enabled if an image is loaded
+  const nonDrawingToolsDisabled = !activeImageId;
 
   return (
     <Card>
@@ -73,53 +80,59 @@ export function AnnotationToolbar({
       <CardContent className="space-y-6">
         {/* Annotation Tool Selection */}
         <div>
-          <Label htmlFor="annotation-tool-select" className="mb-2 block text-sm font-medium">Annotation Tool</Label>
-          <Select 
-            value={currentTool} 
+          <Label htmlFor="annotation-tool-select" className="mb-2 block text-sm font-medium">Canvas Tool</Label>
+          <Select
+            value={currentTool}
             onValueChange={(value) => onToolChange(value as AnnotationTool)}
-            // Disable drawing tools if cannot annotate
-            disabled={currentTool !== 'select' && drawingToolsDisabled} 
+            disabled={nonDrawingToolsDisabled} // Disable dropdown if no image loaded
           >
             <SelectTrigger id="annotation-tool-select" className="bg-background">
-              <SelectValue placeholder="Select an annotation tool" />
+              <SelectValue placeholder="Select a tool" />
             </SelectTrigger>
             <SelectContent>
               {(Object.keys(toolIcons) as AnnotationTool[]).map((tool) => {
                 const Icon = toolIcons[tool];
-                const isDisabled = tool !== 'select' && drawingToolsDisabled;
+                const isDrawingTool = tool === 'bbox' || tool === 'polygon' || tool === 'freehand';
+                const isDisabled = nonDrawingToolsDisabled || (isDrawingTool && drawingToolsDisabled);
                 return (
                   <SelectItem key={tool} value={tool} disabled={isDisabled}>
                     <div className="flex items-center">
                       <Icon className="mr-2 h-4 w-4 shrink-0" />
                       <span>{toolNames[tool]}</span>
+                      {tool === 'pan' && <span className="ml-auto text-xs text-muted-foreground">(or Middle-Click)</span>}
                     </div>
                   </SelectItem>
                 );
               })}
             </SelectContent>
           </Select>
-           {drawingToolsDisabled && currentTool !== 'select' && (
+           {drawingToolsDisabled && (currentTool === 'bbox' || currentTool === 'polygon' || currentTool === 'freehand') && (
              <p className="mt-1 text-xs text-destructive">
                Upload an image and create a class to enable drawing tools.
              </p>
            )}
+           {nonDrawingToolsDisabled && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Upload an image to enable tools.
+              </p>
+           )}
         </div>
 
         {/* Selected Annotation Actions (only visible/enabled when select tool is active and annotation selected) */}
-         {currentTool === 'select' && (
+         {currentTool === 'select' && !nonDrawingToolsDisabled && (
           <div className="space-y-2 pt-2 border-t border-border mt-4">
              <Label className="text-sm font-medium text-muted-foreground">Selected Annotation Actions</Label>
-            <Button 
-              variant="outline" 
-              className="w-full" 
+            <Button
+              variant="outline"
+              className="w-full"
               onClick={onOpenEditClassDialog}
               disabled={!isAnnotationSelected}
             >
               <Palette className="mr-2 h-4 w-4 shrink-0" /> Change Class
             </Button>
-            <Button 
-              variant="destructive" 
-              className="w-full" 
+            <Button
+              variant="destructive"
+              className="w-full"
               onClick={onDeleteSelectedAnnotation}
               disabled={!isAnnotationSelected}
             >
@@ -137,7 +150,7 @@ export function AnnotationToolbar({
              )}
           </div>
          )}
-        
+
         {/* Annotation Classes */}
         <div className="space-y-3 pt-4 border-t border-border">
           <Label className="text-sm font-medium flex items-center">
@@ -166,7 +179,7 @@ export function AnnotationToolbar({
               <p className="text-xs text-muted-foreground text-center p-2">No classes created yet. Add a class below.</p>
             )}
           </ScrollArea>
-         
+
           <div className="space-y-2 pt-2">
             <Label htmlFor="new-class-name-input" className="text-sm font-medium">Add New Class</Label>
             <div className="flex space-x-2">
@@ -180,7 +193,7 @@ export function AnnotationToolbar({
                 className="text-sm h-9 bg-background flex-1"
               />
               <Button onClick={handleCreateClass} variant="secondary" className="h-9 px-3" disabled={!newClassName.trim()}>
-                <PlusSquare className="h-4 w-4 shrink-0" /> 
+                <PlusSquare className="h-4 w-4 shrink-0" />
                 <span className="ml-2 hidden sm:inline">Add</span>
               </Button>
             </div>
@@ -195,3 +208,4 @@ export function AnnotationToolbar({
     </Card>
   );
 }
+

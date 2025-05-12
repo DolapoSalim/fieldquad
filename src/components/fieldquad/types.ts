@@ -1,6 +1,6 @@
 
 
-export type AnnotationTool = 'select' | 'bbox' | 'polygon' | 'freehand';
+export type AnnotationTool = 'select' | 'bbox' | 'polygon' | 'freehand' | 'pan'; // Added 'pan'
 
 export interface Point {
   x: number;
@@ -16,7 +16,7 @@ export interface AnnotationClass {
 export interface Annotation {
   id: string; // UUID
   classId: string; // Corresponds to AnnotationClass.id
-  type: Exclude<AnnotationTool, 'select'>;
+  type: Exclude<AnnotationTool, 'select' | 'pan'>; // Exclude 'pan' here too
   // For bbox: [ {x: minX, y: minY}, {x: maxX, y: maxY} ] or two corner points
   // For polygon/freehand: array of points [{x,y}, {x,y}, ...]
   points: Point[]; 
@@ -31,7 +31,7 @@ export interface ImageDimensions {
 
 // Data structure for a shape that has been drawn but not yet assigned a class
 export interface ShapeData {
-  type: Exclude<AnnotationTool, 'select'>;
+  type: Exclude<AnnotationTool, 'select' | 'pan'>; // Exclude 'pan'
   points: Point[];
 }
 

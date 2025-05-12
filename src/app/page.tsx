@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -333,6 +334,7 @@ export default function FieldQuadPage(): JSX.Element {
             onOpenEditClassDialog={handleOpenEditClassDialog}
             isAnnotationSelected={!!selectedAnnotationId}
             canAnnotate={!!activeImageId && annotationClasses.length > 0} // Can draw if image active and classes exist
+            activeImageId={activeImageId} // Pass activeImageId
           />
           <ExportControls
             batchImages={batchImages} // Pass the whole batch
@@ -455,3 +457,4 @@ export default function FieldQuadPage(): JSX.Element {
     </div>
   );
 }
+
