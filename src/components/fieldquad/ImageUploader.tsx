@@ -6,7 +6,7 @@ import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { UploadCloud, X, LayoutGrid, List, Crop } from 'lucide-react'; // Added Crop icon
+import { UploadCloud, X, LayoutGrid, List, Crop } from 'lucide-react'; // Crop icon is already imported
 import type { ImageDimensions, ImageState } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -18,7 +18,7 @@ interface ImageUploaderProps {
   onBatchUpload: (imageStates: ImageState[]) => void;
   onImageSelect: (id: string) => void;
   onImageRemove: (id: string) => void;
-  onImageCrop: (id: string) => void; // Added prop for initiating crop
+  onImageCrop: (id: string) => void; // Prop for initiating crop
   batchImages: ImageState[];
   activeImageId: string | null;
 }
@@ -265,3 +265,4 @@ export function ImageUploader({
     </Card>
   );
 }
+
