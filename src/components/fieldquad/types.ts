@@ -55,6 +55,7 @@ export interface ImageState {
   cropArea?: CropArea | null; // Optional: Defines the cropped region { x, y, width, height } in original image pixels
 }
 
+// Interface for defining the crop area
 export interface CropArea {
   x: number;
   y: number;

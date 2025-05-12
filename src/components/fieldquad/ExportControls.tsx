@@ -124,6 +124,11 @@ export function ExportControls({
       if (imgState.cropArea) {
           fileContent += `## Crop Area (Original Coords): x=${imgState.cropArea.x}, y=${imgState.cropArea.y}, w=${imgState.cropArea.width}, h=${imgState.cropArea.height}\n`;
       }
+      if (imgState.dimensions && !imgState.cropArea) {
+         fileContent += `## Original Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight} pixels\n`;
+      } else if (imgState.dimensions && imgState.cropArea) {
+         fileContent += `## Original Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight} pixels\n`;
+      }
 
 
       // Annotations for this image
@@ -189,8 +194,8 @@ export function ExportControls({
        return {
            imageInfo: {
                name: imgState.file.name,
-               width: effectiveDims.width,
-               height: effectiveDims.height,
+               width: effectiveDims.width, // Effective width
+               height: effectiveDims.height, // Effective height
                isCropped: !!imgState.cropArea,
                cropArea: imgState.cropArea ? { // Report original crop coords
                     x: imgState.cropArea.x,
@@ -350,8 +355,8 @@ export function ExportControls({
           const imgState = batchImages.find(img => img.file.name === item.imageName);
           const effectiveDims = getEffectiveDimensions(imgState!);
           groupedData[item.imageName] = {
-            width: effectiveDims?.width ?? 0,
-            height: effectiveDims?.height ?? 0,
+            width: effectiveDims?.width ?? 0, // Effective width
+            height: effectiveDims?.height ?? 0, // Effective height
             isCropped: !!imgState?.cropArea,
             originalWidth: imgState?.dimensions?.naturalWidth,
             originalHeight: imgState?.dimensions?.naturalHeight,
@@ -390,6 +395,9 @@ export function ExportControls({
         content += `## Effective Size: ${effectiveDims.width}x${effectiveDims.height} pixels ${imgState.cropArea ? '(Cropped)' : '(Original)'}\n`;
         if (imgState.cropArea) {
              content += `## Crop Area (Original Coords): x=${imgState.cropArea.x}, y=${imgState.cropArea.y}, w=${imgState.cropArea.width}, h=${imgState.cropArea.height}\n`;
+        }
+        if (imgState.dimensions) {
+            content += `## Original Size: ${imgState.dimensions.naturalWidth}x${imgState.dimensions.naturalHeight} pixels\n`;
         }
         content += "--------------------\n";
 

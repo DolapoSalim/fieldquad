@@ -2,7 +2,7 @@
 "use client";
 
 import type React from 'react';
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import type { Point, Annotation, AnnotationTool, AnnotationClass, ImageDimensions, ShapeData, CropArea } from './types';
 import { useToast } from "@/hooks/use-toast";
 import { Button } from '@/components/ui/button';
@@ -66,9 +66,12 @@ export function AnnotationCanvas({
 
   // --- Effective Dimensions ---
   // Use cropped dimensions if available, otherwise full image dimensions
-  const effectiveDimensions = cropArea
-    ? { naturalWidth: cropArea.width, naturalHeight: cropArea.height }
-    : imageDimensions;
+  const effectiveDimensions = useMemo(() => {
+      return cropArea
+        ? { naturalWidth: cropArea.width, naturalHeight: cropArea.height }
+        : imageDimensions;
+  }, [cropArea, imageDimensions]);
+
 
   const getCanvasContext = useCallback(() => {
     const canvas = canvasRef.current;
@@ -514,7 +517,22 @@ const handleZoom = (factor: number, centerX?: number, centerY?: number) => {
             }
              // For polygon, need redraw to show line to cursor
             if(currentTool === 'polygon') {
-                redrawCanvas();
+                 redrawCanvas(); // Redraw to show the line to the cursor
+                 // Draw the line to the current mouse position explicitly on top
+                if (ctx && currentPoints.length > 0) {
+                    ctx.save();
+                    ctx.translate(offset.x, offset.y);
+                    ctx.scale(zoom, zoom);
+                    ctx.beginPath();
+                    ctx.strokeStyle = TEMP_DRAW_COLOR;
+                    ctx.lineWidth = ANNOTATION_LINE_WIDTH / zoom;
+                    ctx.moveTo(currentPoints[currentPoints.length - 1].x, currentPoints[currentPoints.length - 1].y);
+                    ctx.lineTo(pos.x, pos.y);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            } else {
+                redrawCanvas(); // Redraw for bbox and freehand updates
             }
         }
     }
@@ -560,12 +578,19 @@ const handleZoom = (factor: number, centerX?: number, centerY?: number) => {
       onShapeDrawn(newShape);
     }
 
+    // For Polygon, MouseUp doesn't finalize the shape, just adds a point if it was a drag,
+    // but our current polygon logic adds points on MouseDown. So MouseUp only matters
+    // for bbox and freehand finalization.
     if (currentTool !== 'polygon') {
         setIsDrawing(false);
         setStartPoint(null);
         setCurrentPoints([]);
     } else {
-       setIsDrawing(false);
+       // For polygon, MouseUp doesn't end the drawing session, only DoubleClick does.
+       // We might reset isDrawing here if we only want clicks, not drag-clicks.
+       // Let's keep isDrawing false after mouse up for polygon too, for simplicity.
+       // Double-click handles finalization. Click (MouseDown) handles adding points.
+       setIsDrawing(false); // End potential drag-drawing, but shape isn't final yet.
     }
      redrawCanvas();
   };
@@ -611,6 +636,8 @@ const handleZoom = (factor: number, centerX?: number, centerY?: number) => {
       if (isPanning) return 'grabbing';
       if (currentTool === 'pan') return 'grab';
       if (currentTool === 'select') {
+          // Add logic here to check if hovering over a draggable annotation handle or body
+          // For now, simplified: move if selected, default otherwise
           return selectedAnnotationId ? 'move' : 'default';
       }
       if (currentTool === 'bbox' || currentTool === 'polygon' || currentTool === 'freehand') {
@@ -625,7 +652,7 @@ const handleZoom = (factor: number, centerX?: number, centerY?: number) => {
       ref={containerRef}
       className="w-full h-full bg-muted/10 rounded-md shadow-inner relative flex items-center justify-center overflow-hidden touch-none"
       data-ai-hint="annotation canvas container"
-      tabIndex={0}
+      tabIndex={0} // Make div focusable for potential keyboard events later
       onWheel={handleWheel}
     >
       <canvas
@@ -633,25 +660,36 @@ const handleZoom = (factor: number, centerX?: number, centerY?: number) => {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => {
-            if (isPanning) {
+        onMouseLeave={(e) => {
+             // Also check if mouse button is still pressed when leaving
+            const isMouseButtonPressed = e.buttons === 1;
+
+            if (isPanning && isMouseButtonPressed) {
+                 // Don't stop panning if mouse leaves while button is down
+            } else if (isPanning && !isMouseButtonPressed) {
                 setIsPanning(false);
                 setPanStart(null);
-                 canvasRef.current?.style.setProperty('cursor', getCursor());
+                canvasRef.current?.style.setProperty('cursor', getCursor());
             }
+
+            // Stop drawing if mouse leaves (unless it's polygon which continues on click)
             if (isDrawing && currentTool !== 'polygon') {
                 setIsDrawing(false);
                  setCurrentPoints([]);
                  setStartPoint(null);
-                 redrawCanvas();
+                 redrawCanvas(); // Redraw to remove temporary shape
             }
         }}
+         onMouseOut={(e) => { // Handles cases where mouse leaves browser window maybe?
+            if (isPanning && e.buttons !== 1) { // Ensure button is up
+                setIsPanning(false);
+                setPanStart(null);
+                canvasRef.current?.style.setProperty('cursor', getCursor());
+            }
+         }}
         onDoubleClick={handleDoubleClick}
-        className={cn(`cursor-${getCursor()}`)}
-        style={{
-          display: 'block',
-          maxWidth: '100%',
-          maxHeight: '100%',
+        className={cn(`block max-w-full max-h-full`, getCursor() === 'grabbing' ? 'cursor-grabbing' : getCursor() === 'grab' ? 'cursor-grab' : `cursor-${getCursor()}`)}
+        style={{ // Let the parent div handle sizing
         }}
         data-ai-hint="annotation area"
       />
